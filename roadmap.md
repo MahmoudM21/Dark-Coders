@@ -1,0 +1,27 @@
+# Roadmap
+- [x] Simplify navbar and add persistent live background themes
+- [x] Expand native voice selection, local ASR adapter and setup guidance; commercial choices marked setup required
+- [x] Add configurable roadmap driven by uploaded unified YAML
+- [ ] Connect commercial voice service — blocked: connection declined
+- [ ] Install and verify local open-source ASR — blocked: target machine and installation permission needed
+- [x] Expand headset room with branded space patterns, avatar portraits and controller/hand spatial controls; shared chat verified on desktop/mobile
+- [ ] Validate controller triggers and hand pinch/touch on actual hardware — blocked: needs a supported headset
+- [x] Voice console uses blueprint screens (text + up to 4 choices, safe error screen)
+- [x] Long-answer pagination (3500-unit pages, Previous/Next, max 4 controls) in the console
+- [x] Plans and settings saved online per Google account (cross-device)
+- [ ] Full spoken conversation test (fake mic) through bubbles + standby
+- [ ] Native app connected directly to the OpenClaw Gateway (replaces Telegram bot) — blocked: needs gateway address/API details from the user
+- [x] Spatial chat design from uploaded room screenshots, with the existing voice conversation and glass styling
+- [x] Live theming (UI panel + voice commands), synced with the account
+- [x] WebXR headset view of spatial chat — needs a real headset to test Enter VR
+- [x] All settings aggregated into one "General" dialog (voice, appearance, models, run options, account); sidebar keeps a read-only live model readout
+- [x] Lifecycle stage icons sit under the waveform animation, centered
+- [x] Route panel removed from the sidebar menu
+- [x] Unified plan review merged into Planning workflow, including the full planner
+- [x] Telegram bot card moved under the Approval card in the run sidebar
+- [x] Plan phases shown as chat messages (model + stage) with Approve / Skip / Stop before each phase runs
+- [x] Portfolio models set up in Models; per-task model picks verified (terra, gemini-3.1-pro)
+- [ ] gpt-5.6-sol-pro — not offered by the built-in AI service
+- [ ] qwen3-coder:30b, gpt-oss:120b — need Ollama running on this computer
+
+- [x] Single/spatial view shares the console planner, chat and run/approval structure

@@ -1,0 +1,959 @@
+---
+apiVersion: darkcoders.ai/v1alpha1
+kind: VoiceChatOpenClawArchitecture
+metadata:
+  name: darkcoders-ai-voice-chat-assistant
+  version: "1.0.0"
+  status: design_specification
+  purpose: >-
+    Unified deployment plan for an AI voice/chat assistant using OpenClaw gateways,
+    multi-model routing, bounded multi-agent delegation, human approval, security,
+    observability, resilience, and multimodal specialist services.
+  ownership:
+    organization: DarkCoders LTD
+    accountable_human_required: true
+  provenance:
+    openclaw_native_concepts:
+      - gateway
+      - agent_identity
+      - per_agent_model_selection
+      - primary_model
+      - ordered_model_fallbacks
+      - auth_profile_rotation
+      - utility_model
+      - image_model
+      - pdf_model
+      - media_models
+      - subagents
+      - bounded_session_orchestration
+      - session_model_override
+      - scheduled_job_model_override
+    darkcoders_architecture_extensions:
+      - chat_task_reasoning_tiers
+      - model_router
+      - risk_router
+      - specialist_router
+      - orchestrator_worker_pattern
+      - swarm_pattern
+      - human_approval_service
+      - voice_realtime_pipeline
+      - case_broker
+      - policy_engine
+      - evidence_provenance_layer
+    caveat: >-
+      Extension names are logical architecture constructs and must not be assumed to be
+      native OpenClaw configuration keys. Validate every rendered field against the
+      installed OpenClaw schema before deployment.
+
+principles:
+  - least_privilege
+  - human_accountability
+  - bounded_delegation
+  - explicit_authority
+  - provider_diversity
+  - graceful_degradation
+  - evidence_provenance
+  - prompt_injection_resistance
+  - data_minimization
+  - cost_aware_routing
+  - latency_aware_routing
+  - modality_aware_routing
+  - zero_implicit_production_authority
+
+architecture:
+  flow:
+    - client
+    - edge_admission
+    - voice_or_chat_frontend
+    - session_manager
+    - openclaw_gateway
+    - policy_and_risk_router
+    - model_router
+    - agent_router
+    - tools_and_connectors
+    - human_approval_when_required
+    - response_synthesis
+    - text_and_or_voice_response
+  separation_domains:
+    tenant_boundary: separate_gateway_os_identity_and_credentials
+    sensitivity_boundary: separate_gateway_or_external_policy_boundary
+    agent_workspace: organizational_boundary_not_complete_security_boundary
+
+clients:
+  supported_channels:
+    - web
+    - mobile
+    - desktop
+    - api
+    - telegram_optional
+    - phone_optional
+  capabilities:
+    text_chat: true
+    push_to_talk: true
+    full_duplex_voice: true
+    interruption_barge_in: true
+    streaming_transcripts: true
+    attachments: true
+    images: true
+    pdfs: true
+    session_history: policy_controlled
+  accessibility:
+    captions: true
+    keyboard_only: true
+    screen_reader: true
+    adjustable_playback_speed: true
+
+voice:
+  enabled: true
+  pipeline:
+    ingress:
+      audio_transport:
+        preferred: webrtc
+        alternatives: [websocket, sip]
+      codecs: [opus, pcm16]
+      vad:
+        enabled: true
+        adaptive: true
+      echo_cancellation: true
+      noise_suppression: true
+    speech_to_text:
+      mode: streaming
+      provider: configurable
+      language_detection: true
+      partial_transcripts: true
+      timestamps: true
+      confidence_scores: true
+      pii_redaction_before_persistence: policy_driven
+    turn_manager:
+      endpointing: semantic_plus_vad
+      barge_in: true
+      cancel_inflight_response_on_interrupt: true
+      duplicate_turn_suppression: true
+    assistant_runtime:
+      route_through_openclaw_gateway: true
+      streaming_tokens: true
+      tool_call_status_events: true
+      approval_status_events: true
+    text_to_speech:
+      mode: streaming
+      provider: configurable
+      voices: policy_allowlisted
+      locale_aware: true
+      ssml: optional
+      interruption: true
+    egress:
+      text_always_available: true
+      audio_when_voice_session: true
+  latency_targets_ms:
+    speech_partial_transcript_p95: 500
+    first_assistant_signal_p95: 1200
+    tts_first_audio_p95: 800
+    note: targets_require_runtime_benchmarking
+  safety:
+    never_speak_secrets: true
+    confirmation_for_high_impact_actions: true
+    synthesized_voice_disclosure: configurable
+    recording_consent: jurisdiction_and_policy_driven
+
+edge_admission:
+  authentication:
+    required: true
+    methods: [oidc, sso, service_identity]
+    mfa_for_privileged_users: true
+  authorization:
+    external_enforcement: true
+    model_cannot_grant_permissions: true
+    controls: [rbac, abac, resource_scope, case_scope]
+  rate_limiting:
+    per_user: true
+    per_tenant: true
+    per_gateway: true
+  input_controls:
+    malware_scan_attachments: external_service
+    file_type_allowlist: true
+    max_payload_size: true
+    data_classification: true
+    prompt_injection_treatment: untrusted_content
+
+openclaw:
+  gateways:
+    strategy: isolated_by_trust_domain
+    minimum_topology:
+      public_or_low_sensitivity:
+        gateway_id: gw-public
+        separate_credentials: true
+      internal:
+        gateway_id: gw-internal
+        separate_credentials: true
+      restricted_optional:
+        gateway_id: gw-restricted
+        separate_credentials: true
+        dedicated_os_identity: true
+    high_availability:
+      enabled: true
+      stateless_front_door: preferred
+      health_checks: true
+      graceful_drain: true
+      no_cross_tenant_session_leakage: required
+  session_management:
+    session_id: opaque
+    user_identity_binding: required
+    tenant_binding: required
+    case_binding: optional
+    tree_visibility: bounded
+    cross_agent_session_access: disabled_by_default
+    retention: externally_defined
+  agent_workspace:
+    default: read_only
+    sandbox_scope: session
+    container_network: disabled_by_default
+    dropped_capabilities: true
+    elevated_execution: false
+
+model_strategy:
+  policy: task_complexity_risk_context_modality_cost_latency_authority
+  aliases:
+    # Logical aliases deliberately decouple routing policy from vendor product names.
+    utility_fast:
+      purpose: titles_classification_progress_summaries_lightweight_operations
+      preferred_model: CONFIGURE_FAST_LOW_COST_MODEL
+      reasoning_effort: low
+    chat_balanced:
+      purpose: normal_voice_and_text_conversation
+      preferred_model: CONFIGURE_BALANCED_GENERAL_MODEL
+      reasoning_effort: low_or_medium
+    task_general:
+      purpose: substantive_professional_tasks
+      preferred_model: CONFIGURE_STRONG_GENERAL_MODEL
+      reasoning_effort: medium
+    reasoning_high:
+      purpose: complex_analysis_architecture_investigation
+      preferred_model: CONFIGURE_STRONG_REASONING_MODEL
+      reasoning_effort: high
+    reasoning_max:
+      purpose: exceptional_high_complexity_cases
+      preferred_model: CONFIGURE_PREMIUM_REASONING_MODEL
+      reasoning_effort: maximum_supported
+    coding:
+      purpose: software_engineering_and_tool_orchestration
+      preferred_model: CONFIGURE_CODING_CAPABLE_MODEL
+    long_context_multimodal:
+      purpose: large_repositories_documents_images_audio_video
+      preferred_model: CONFIGURE_LONG_CONTEXT_MULTIMODAL_MODEL
+    vision:
+      purpose: image_understanding
+      preferred_model: CONFIGURE_VISION_MODEL
+    pdf:
+      purpose: native_or_specialized_pdf_understanding
+      preferred_model: CONFIGURE_PDF_MODEL
+    image_generation:
+      purpose: generated_visual_media
+      preferred_model: CONFIGURE_IMAGE_GENERATION_MODEL
+    video_generation:
+      purpose: generated_video_media
+      preferred_model: CONFIGURE_VIDEO_GENERATION_MODEL
+    decision:
+      purpose: typed_decisions_scores_boolean_probabilities_when_supported
+      preferred_model: CONFIGURE_DECISION_MODEL
+  recommended_vendor_portfolio:
+    primary_provider: OpenAI_or_approved_primary
+    fallback_provider_1: Anthropic_or_approved_independent_provider
+    fallback_provider_2: Google_or_approved_independent_provider
+    emergency_provider: approved_fourth_independent_provider
+    rule: do_not_make_all_fallbacks_depend_on_one_provider
+    note: >-
+      Exact model IDs must be selected from currently approved provider catalogs and
+      validated against the installed OpenClaw/provider adapters. Do not hard-code
+      historical model names without runtime verification.
+  routing_tiers:
+    L0_utility: utility_fast
+    L1_chat: chat_balanced
+    L2_task: task_general
+    L3_reasoning: reasoning_high
+    L4_deep_reasoning: reasoning_max
+    L5_specialist: modality_or_domain_specific
+    L6_orchestrator: reasoning_high
+    L7_exceptional_escalation: reasoning_max
+    L8_failover: cross_provider_chain
+  escalation_rules:
+    - from: utility_fast
+      to: chat_balanced
+      when: task_requires_semantic_dialogue
+    - from: chat_balanced
+      to: task_general
+      when: substantive_work_product_required
+    - from: task_general
+      to: reasoning_high
+      when: complexity_or_uncertainty_threshold_exceeded
+    - from: reasoning_high
+      to: reasoning_max
+      when: high_complexity_and_high_value
+    - from: any
+      to: specialist
+      when: modality_or_domain_requires_specialist
+  fallback:
+    auth_profile_rotation_before_model_fallback: true
+    ordered_chain:
+      - same_provider_approved_alternate_profile
+      - independent_provider_fallback_1
+      - independent_provider_fallback_2
+      - emergency_provider
+    trigger_conditions:
+      - authentication_failure
+      - quota_exhaustion
+      - rate_limit
+      - provider_outage
+      - model_unavailable
+      - retryable_transport_error
+    never_treat_fallback_as_permission_escalation: true
+    preserve_task_policy_across_fallbacks: true
+  cost_controls:
+    token_budgets_per_route: true
+    concurrency_limits: true
+    provider_spend_caps_external: true
+    alerts: true
+    cache_where_safe: true
+  quality_controls:
+    model_qualification_required: true
+    benchmark_per_task_family: true
+    regression_suite: true
+    fallback_quality_test: true
+
+routing:
+  classifier:
+    inputs:
+      - user_intent
+      - modality
+      - task_type
+      - complexity
+      - risk
+      - sensitivity
+      - context_size
+      - latency_requirement
+      - cost_budget
+      - tool_requirement
+      - authority_requirement
+    outputs:
+      - gateway
+      - agent_id
+      - model_alias
+      - tool_policy
+      - approval_policy
+  voice_defaults:
+    normal_chat: chat_balanced
+    lightweight_control_turn: utility_fast
+    complex_question: task_general
+    deep_analysis: reasoning_high
+  confidence_policy:
+    low_confidence: ask_or_escalate
+    conflicting_evidence: preserve_alternatives
+    missing_evidence: partial_with_gap
+    missing_connector: blocked_or_authorized_export
+    timeout: report_incomplete_not_success
+
+agents:
+  hierarchy_model:
+    concepts_must_remain_distinct:
+      job: local_employment_bundle
+      nice_work_role: framework_description_of_work
+      grade: local_decomposition_and_review_level
+      agent: openclaw_configuration_identity
+      skill_package: procedural_instruction
+      tool_capability: callable_credentialed_integration
+      authority: externally_enforced_permission
+  profiles:
+    soc_dfir_reference: 13
+    compact_reference: 48
+    enterprise_reference: 174
+    rule: do_not_spawn_every_layer_for_every_request
+  root_orchestrator:
+    id: dc-orchestrator
+    model_alias: reasoning_high
+    responsibilities:
+      - classify
+      - plan
+      - delegate
+      - merge_results
+      - enforce_evidence_requirements
+      - request_human_decisions
+    production_authority: none_by_default
+  workers:
+    default_model_alias: chat_balanced
+    complex_worker_model_alias: task_general
+    specialist_model_alias: specialist
+    leaf_spawn_denied: true
+  delegation:
+    enabled: true
+    direction: downward_and_bounded
+    cross_role_coordination: director_or_command
+    required_task_packet:
+      - explicit_target_agent_id
+      - isolated_context
+      - finite_timeout
+      - defined_work_product
+      - evidence_requirements
+      - data_classification
+      - tool_allowlist
+    output_path: native_parent_announcement_or_equivalent
+    direct_cross_bot_messaging: disabled_by_default
+    max_depth: profile_specific_and_schema_validated
+    max_active_children: configured_limit
+    total_concurrency: configured_limit
+  subagents:
+    enabled: true
+    use_for:
+      - bounded_parallel_research
+      - specialist_analysis
+      - independent_workstreams_with_distinct_evidence
+    do_not_use_as_false_corroboration: true
+    note: same_model_plus_same_source_is_not_independent_corroboration
+  swarm:
+    status: darkcoders_pattern_not_assumed_native_mode
+    enabled: optional
+    architecture: orchestrator_workers
+    controls:
+      - bounded_membership
+      - explicit_targets
+      - finite_lifetime
+      - per_worker_budget
+      - no_peer_permission_escalation
+
+knowledge_and_workforce:
+  framework: NICE_aligned_where_applicable
+  official_status:
+    role_titles_verified_in_reference_snapshot: 42
+    competency_area_titles_verified_in_reference_snapshot: 11
+    full_official_tks_bundled: false
+    rule: never_invent_official_TKS_identifiers_or_relationships
+  mapping_chain:
+    - organization
+    - position
+    - job
+    - work_role
+    - task
+    - knowledge_and_skill_requirements
+    - tool_contract
+    - model_qualification
+    - agent
+    - externally_enforced_authority
+  role_loading:
+    workers: role_procedures_plus_relevant_competency_lenses_plus_common_controls
+    coordinators: orchestration_and_review_skills_plus_roster
+
+memory_and_context:
+  short_term:
+    session_context: true
+    bounded: true
+  long_term:
+    enabled: policy_controlled
+    explicit_data_classes: true
+    user_and_tenant_partitioning: required
+    sensitive_memory: disabled_unless_approved
+  retrieval:
+    provenance_required: true
+    access_filtered_before_model: true
+    prompt_injection_scanning: true
+  summarization:
+    rolling_summary: true
+    preserve_decisions_and_open_items: true
+    never_summarize_secrets_into_lower_classification: true
+
+multimodal:
+  images:
+    understanding_route: vision
+    generation_route: image_generation
+  pdfs:
+    route: pdf
+    preserve_page_provenance: true
+  audio:
+    route: voice_pipeline
+  video:
+    understanding_route: long_context_multimodal
+    generation_route: video_generation
+  attachments:
+    treat_as_untrusted: true
+    source_reference_required: true
+
+tools_and_connectors:
+  policy:
+    default_deny: true
+    exact_allowlists: true
+    credentials_outside_model_context: true
+    secrets_manager_required: true
+    service_side_authorization: true
+  baseline_denied_unless_explicitly_approved:
+    - shell_execution
+    - process_management
+    - arbitrary_file_write
+    - browser_control
+    - node_control
+    - scheduling_control
+    - gateway_admin
+    - direct_cross_agent_messaging
+    - elevated_execution
+  connector_contract:
+    required_fields:
+      - connector_id
+      - purpose
+      - data_classification
+      - read_write_scope
+      - credential_identity
+      - resource_scope
+      - timeout
+      - audit_events
+      - error_contract
+    missing_connector_behavior: never_simulate_results
+  candidate_enterprise_connectors:
+    - identity_directory
+    - ticketing
+    - knowledge_base
+    - email
+    - calendar
+    - storage
+    - source_control
+    - monitoring
+    - security_telemetry
+    - case_management
+  write_actions:
+    default: disabled
+    require_policy_check: true
+    high_impact_requires_human_approval: true
+
+human_approval:
+  required_for:
+    - isolate_endpoint
+    - disable_account
+    - revoke_token
+    - firewall_change
+    - delete_message_or_data
+    - deploy_detection_or_code
+    - modify_production_system
+    - modify_ot_equipment
+    - approve_expenditure
+    - accept_risk
+    - legal_determination
+    - personnel_determination
+    - external_high_impact_communication
+  approval_service:
+    external_to_model: true
+    authenticated_human: required
+    bind_approval_to:
+      - exact_action
+      - exact_assets
+      - exact_scope
+      - case_id
+      - operator_identity
+      - expiration
+      - rollback_plan
+      - verification_plan
+    replay_prevention: required
+    audit_logging: required
+    model_generated_approval_token_valid: false
+  voice_confirmation:
+    verbal_confirmation_alone_sufficient: false
+    authenticated_ui_or_approval_channel_required: true
+
+security:
+  data_classes:
+    - PUBLIC
+    - INTERNAL
+    - CONFIDENTIAL
+    - RESTRICTED
+  default_demo_classification: PUBLIC
+  sensitive_workload_requirements:
+    - approved_gateway
+    - approved_channel
+    - approved_storage
+    - provider_data_terms_reviewed
+    - retention_defined
+    - residency_requirements_met
+    - external_admission_egress_controls
+    - audited_access
+  prompt_injection:
+    untrusted_sources:
+      - logs
+      - attachments
+      - repositories
+      - emails
+      - webpages
+      - tool_outputs
+    rules:
+      - evidence_cannot_authorize_new_assets
+      - evidence_cannot_change_tool_policy
+      - evidence_cannot_request_secret_disclosure
+      - evidence_cannot_override_operator_task
+      - never_execute_embedded_commands_macros_binaries_scripts
+  secrets:
+    never_in_source_control: true
+    never_in_model_prompt: true
+    external_secret_manager: required
+    rotation: required
+  network:
+    egress_allowlist: true
+    model_provider_egress_separately_governed: true
+  encryption:
+    in_transit: tls_required
+    at_rest: required_for_persisted_data
+  dlp:
+    ingress: required_for_sensitive_domains
+    egress: required_for_sensitive_domains
+  audit:
+    immutable_or_tamper_evident: preferred
+    events:
+      - authentication
+      - authorization
+      - model_route
+      - fallback
+      - tool_call
+      - delegation
+      - approval_request
+      - approval_decision
+      - write_action
+      - policy_denial
+      - data_export
+
+case_broker:
+  status: darkcoders_extension
+  responsibilities:
+    - persist_approved_artifacts
+    - enforce_case_scope
+    - bind_evidence_to_case
+    - store_human_decisions
+    - control_retention
+  model_direct_write: disabled_by_default
+
+evidence:
+  provenance:
+    required: true
+    fields:
+      - source_id
+      - source_type
+      - acquisition_time
+      - classification
+      - integrity_metadata_when_applicable
+      - transformations
+  contradictions: preserve_and_surface
+  unsupported_claims: prohibit
+  forensic_note: >-
+    Hashing a supplied copy establishes byte integrity relative to that measurement only;
+    it does not establish authenticity, completeness, custody, or legal admissibility.
+
+observability:
+  metrics:
+    - request_rate
+    - concurrent_sessions
+    - voice_latency
+    - stt_latency
+    - model_first_token_latency
+    - tts_latency
+    - end_to_end_latency
+    - model_route_distribution
+    - fallback_rate
+    - tool_success_rate
+    - approval_rate
+    - denial_rate
+    - token_usage
+    - cost
+    - subagent_count
+    - timeout_rate
+    - error_rate
+  tracing:
+    distributed: true
+    correlation_ids:
+      - request_id
+      - session_id
+      - case_id_optional
+      - parent_child_agent_ids
+    redact_sensitive_payloads: true
+  logs:
+    structured: true
+    retention: policy_defined
+    transcript_logging: opt_in_or_policy_driven
+    secret_redaction: required
+  alerts:
+    - provider_outage
+    - abnormal_fallback_rate
+    - spend_threshold
+    - policy_denial_spike
+    - approval_service_failure
+    - gateway_health_failure
+    - latency_slo_breach
+
+resilience:
+  gateway:
+    multi_instance: true
+    health_based_routing: true
+    graceful_failover: true
+  provider:
+    cross_provider_fallback: true
+    circuit_breakers: true
+    exponential_backoff: true
+    bounded_retries: true
+  sessions:
+    idempotency_keys_for_actions: true
+    resume_after_transient_failure: where_safe
+  tools:
+    timeouts: mandatory
+    retry_policy: per_tool
+    never_retry_non_idempotent_action_without_idempotency_control: true
+  degradation:
+    voice_to_text_fallback: true
+    specialist_to_general_model_fallback: policy_controlled
+    read_only_mode_on_approval_service_failure: true
+    no_fake_success: true
+
+action_execution:
+  architecture:
+    assistant: proposes_or_requests
+    policy_engine: validates
+    human_approval_service: authorizes_when_required
+    execution_service: performs_narrow_action
+    verifier: confirms_outcome
+  execution_service:
+    broad_shell: prohibited
+    narrow_api_adapters: required
+    scoped_credentials: required
+    rollback: required_where_possible
+    post_action_verification: required
+
+response_synthesis:
+  orchestrator_model_alias: reasoning_high
+  requirements:
+    - distinguish_facts_inferences_and_recommendations
+    - preserve_source_provenance
+    - surface_missing_evidence
+    - surface_partial_or_blocked_status
+    - never_claim_action_without_execution_evidence
+    - never_claim_deployment_from_configuration_preview
+  voice_rendering:
+    concise_by_default: true
+    long_results_offer_text_view: true
+    read_sensitive_values_aloud: false
+
+configuration_management:
+  environments: [development, staging, production]
+  config_as_code: true
+  schema_validation: required
+  secrets_externalized: true
+  change_review: required
+  signed_releases: preferred
+  rollback_config: required
+  feature_flags:
+    - voice
+    - subagents
+    - swarm
+    - write_actions
+    - restricted_gateway
+    - long_term_memory
+
+acceptance_gates:
+  before_staging:
+    - openclaw_installed_schema_check_passes
+    - all_native_fields_validated
+    - provider_credentials_configured_outside_model_context
+    - sandbox_read_only_probe_passes
+    - denied_tool_probe_passes
+    - leaf_spawn_denial_probe_passes
+    - cross_agent_access_denial_probe_passes
+    - model_routing_tests_pass
+    - fallback_tests_pass
+    - prompt_injection_tests_pass
+    - voice_barge_in_tests_pass
+    - secret_redaction_tests_pass
+  before_production:
+    - authenticated_human_owner_signoff
+    - threat_model_reviewed
+    - data_classification_and_retention_approved
+    - provider_terms_and_residency_approved
+    - external_rbac_abac_verified
+    - approval_service_end_to_end_tested
+    - action_replay_prevention_tested
+    - audit_trail_verified
+    - gateway_failover_tested
+    - provider_failover_tested
+    - load_and_latency_tests_pass
+    - spend_controls_enabled
+    - incident_runbook_approved
+    - backup_and_recovery_tested
+    - synthetic_end_to_end_case_passes
+  production_status_rule: >-
+    A YAML plan, preview, generated workspace, or model response is never evidence that
+    the system is deployed, authorized, secure, or production validated.
+
+testing:
+  suites:
+    functional:
+      - text_chat
+      - streaming_voice
+      - interruption
+      - tool_calls
+      - multimodal
+      - subagent_delegation
+      - result_synthesis
+    security:
+      - prompt_injection
+      - privilege_escalation
+      - cross_tenant_access
+      - secret_exfiltration
+      - unsafe_tool_invocation
+      - approval_bypass
+    resilience:
+      - primary_model_failure
+      - auth_profile_failure
+      - provider_outage
+      - gateway_instance_failure
+      - tool_timeout
+      - approval_service_failure
+    quality:
+      - hallucination
+      - evidence_fidelity
+      - task_completion
+      - specialist_routing
+      - fallback_quality
+    voice:
+      - noisy_audio
+      - accents_and_locales
+      - barge_in
+      - long_pause
+      - packet_loss
+      - stt_error_recovery
+  model_qualification:
+    required_per_task_family: true
+    evidence_record:
+      - model_id
+      - provider
+      - version_or_snapshot
+      - test_dataset
+      - score
+      - latency
+      - cost
+      - known_failure_modes
+      - approval_date
+
+slos:
+  availability:
+    gateway_monthly_target: "99.9%"
+    note: business_target_not_guarantee
+  reliability:
+    no_unapproved_high_impact_actions: "100% design objective"
+    action_audit_coverage: "100% design objective"
+  voice:
+    p95_first_assistant_signal_ms: 1200
+    note: validate_under_real_network_and_provider_conditions
+
+deployment_phases:
+  phase_0_design:
+    outputs:
+      - approved_architecture
+      - threat_model
+      - data_classification
+      - model_benchmark_plan
+  phase_1_local_synthetic:
+    data: synthetic_PUBLIC_only
+    actions: read_only
+    voice: enabled
+    subagents: bounded
+  phase_2_staging_integrations:
+    data: approved_nonproduction
+    actions: sandboxed_test_actions
+    approval_service: enabled
+  phase_3_limited_production:
+    users: allowlisted
+    gateways: separated_by_trust_domain
+    write_actions: narrowly_allowlisted
+    monitoring: enhanced
+  phase_4_scaled_production:
+    prerequisites:
+      - passed_acceptance_gates
+      - proven_operational_runbooks
+      - cost_capacity_model
+      - periodic_red_team
+      - periodic_model_requalification
+
+runbooks:
+  required:
+    - gateway_outage
+    - provider_outage
+    - credential_compromise
+    - prompt_injection_incident
+    - data_exposure
+    - runaway_cost
+    - approval_service_failure
+    - connector_failure
+    - model_quality_regression
+    - voice_service_degradation
+
+example_runtime_policy:
+  normal_voice_chat:
+    gateway: gw-internal
+    model_alias: chat_balanced
+    tools: read_only_allowlist
+    approval: none_unless_action_requested
+  complex_task:
+    model_alias: task_general
+    escalate_to: reasoning_high
+    subagents: bounded
+  multimodal_document_task:
+    pdf_route: pdf
+    image_route: vision
+    synthesis_route: reasoning_high
+  high_impact_action_request:
+    assistant_behavior: prepare_action_request
+    policy_engine: validate_scope
+    human_approval: required
+    execution: narrow_external_service_only
+    verification: required
+  model_failure:
+    order:
+      - auth_profile_rotation
+      - independent_provider_fallback_1
+      - independent_provider_fallback_2
+      - emergency_provider
+    preserve_security_policy: true
+
+implementation_backlog:
+  P0_required:
+    - openclaw_gateway_instances
+    - identity_and_access_layer
+    - session_manager
+    - realtime_voice_transport
+    - streaming_stt
+    - streaming_tts
+    - model_router
+    - policy_engine
+    - cross_provider_fallback
+    - agent_registry
+    - bounded_subagent_orchestration
+    - exact_tool_allowlists
+    - external_secret_manager
+    - audit_pipeline
+    - observability
+    - human_approval_service
+    - synthetic_acceptance_suite
+  P1_recommended:
+    - case_broker
+    - long_context_specialist
+    - multimodal_specialists
+    - cost_optimizer
+    - quality_evaluation_pipeline
+    - DLP
+    - HA_gateway
+  P2_optional:
+    - phone_SIP_channel
+    - telegram_channel
+    - video_generation
+    - bounded_swarm_pattern
+    - long_term_memory
+
+open_questions_before_real_deployment:
+  - exact_installed_OpenClaw_version_and_schema
+  - approved_LLM_providers_and_exact_model_IDs
+  - voice_STT_and_TTS_provider_selection
+  - data_residency_and_retention_requirements
+  - required_channels_and_tenants
+  - production_tools_and_connectors
+  - actions_that_require_human_approval
+  - expected_concurrency_and_budget
+  - target_languages_and_voice_locales
+  - required_NICE_roles_and_workforce_profile
+  - incident_and_business_continuity_owners
