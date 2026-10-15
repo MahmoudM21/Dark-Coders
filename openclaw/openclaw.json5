@@ -1,0 +1,65 @@
+{
+  // Config fragment to merge into ~/.openclaw/openclaw.json
+  // NOTE: key names below were derived from project architecture guidance and are UNVERIFIED
+  // against docs.openclaw.ai in this environment (domain was unreachable).
+  gateway: {
+    http: {
+      endpoints: {
+        chatCompletions: { enabled: true }
+      }
+    }
+  },
+  mcp: {
+    servers: {
+      clinic: {
+        transport: "stdio",
+        command: "node",
+        args: ["/ABSOLUTE/PATH/TO/repo/openclaw/mcp/clinic/server.mjs"],
+        env: {
+          CLINIC_API_URL: "${CLINIC_API_URL}",
+          CLINIC_TOOLS_TOKEN: "${CLINIC_TOOLS_TOKEN}"
+        }
+      }
+    }
+  },
+  agents: {
+    list: [
+      {
+        id: "clinic-receptionist",
+        model: "google/gemini-3.8-flash",
+        workspace: "~/.openclaw/workspaces/clinic-receptionist",
+        thinking: { effort: "low" },
+        tools: {
+          allow: [
+            "mcp.clinic.get_clinic_info",
+            "mcp.clinic.select_branch",
+            "mcp.clinic.identify_patient",
+            "mcp.clinic.check_availability",
+            "mcp.clinic.hold_slot",
+            "mcp.clinic.request_approval",
+            "mcp.clinic.confirm_booking",
+            "mcp.clinic.reschedule_appointment",
+            "mcp.clinic.cancel_appointment",
+            "mcp.clinic.list_my_appointments",
+            "mcp.clinic.add_note",
+            "mcp.clinic.escalate_to_human"
+          ],
+          deny: [
+            "exec",
+            "process",
+            "write",
+            "edit",
+            "apply_patch",
+            "browser",
+            "session.*",
+            "messaging.*"
+          ]
+        },
+        skills: ["clinic-escalation", "clinic-voice-style"]
+      }
+    ]
+  },
+  skills: {
+    directory: ["/ABSOLUTE/PATH/TO/repo/openclaw/skills"]
+  }
+}

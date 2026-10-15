@@ -1,15 +1,51 @@
-# OpenClaw Agents & Skills (`openclaw/`)
+# OpenClaw runtime package for Clinic Reception
 
-Place your OpenClaw configuration, agent definitions, custom skills, and MCP/tool definitions in this directory as part of your assignment submission.
+## 1) Required environment
 
-## Recommended Structure
+Set these in your gateway/server environment:
 
-```text
-openclaw/
-├── README.md               # How to start your OpenClaw gateway & required env vars
-├── gateway.yaml            # OpenClaw gateway configuration & model routing
-├── agents/                 # Your custom OpenClaw agent definitions (orchestrator + specialists)
-└── skills/                 # Custom OpenClaw skills, tool scripts, or MCP server configs
+- `OPENCLAW_GATEWAY_URL`
+- `OPENCLAW_API_KEY`
+- `CLINIC_API_URL` (example: `http://localhost:3000`)
+- `CLINIC_TOOLS_TOKEN`
+- `GEMINI_API_KEY` (on gateway)
+- `CLINIC_TENANT_SLUG=demo-dental`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- Optional: `ESCALATION_WEBHOOK_URL`
+
+## 2) Enable chat-completions endpoint
+
+In your OpenClaw config, ensure:
+
+- `gateway.http.endpoints.chatCompletions.enabled`
+
+> `docs.openclaw.ai` was unreachable in this environment, so key-name verification remains unverified.
+
+## 3) Load the config fragment
+
+1. Open your `~/.openclaw/openclaw.json`.
+2. Merge `openclaw/openclaw.json5` into it.
+3. Replace `/ABSOLUTE/PATH/TO/repo` placeholders with your real absolute path.
+
+## 4) Install MCP proxy deps
+
+```bash
+cd /home/runner/work/Dark-Coders/Dark-Coders/openclaw/mcp/clinic
+npm install
 ```
 
-See **[`../ASSIGNMENT.md`](../ASSIGNMENT.md)** and **`../DarkCoders-OpenClaw-Assignment.pdf`** for full details.
+## 5) Smoke-test gateway
+
+```bash
+curl -sS "$OPENCLAW_GATEWAY_URL/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: ******" \
+  -d '{"model":"openclaw/clinic-receptionist","messages":[{"role":"user","content":"what are your opening hours?"}]}'
+```
+
+## 6) Voice settings (Arabic)
+
+- ASR: local Whisper-compatible server (`Settings -> Voice & Agents -> ASR engine: local`), auto language detect.
+- TTS: browser device voice with `ar-EG`/`ar-SA` voice installed, or gateway TTS.
+- Kokoro default voice is English; avoid it for Arabic unless explicitly configured.
