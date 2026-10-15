@@ -28,6 +28,7 @@ export const AGENTS: Record<string, AgentProfile> = {
   ciso: { label: "CISO · security & risk", persona: "Act as the organisation's chief information security officer: prioritise risk, controls, evidence and approvals." },
   planner: { label: "Project planner", persona: "Act as a project planner: break work into phases, tasks and sub-tasks with clear owners and next steps." },
   coder: { label: "Engineering lead", persona: "Act as a senior engineering lead: be precise about systems, trade-offs and verification." },
+  clinic: { label: "Clinic receptionist", persona: "Act as the clinic's reception assistant. Follow the clinic-receptionist agent instructions exactly; the server is the source of truth for availability, bookings and approvals." },
 };
 
 export function getAgents(v?: Partial<VoiceSettings>): Record<string, AgentProfile> {

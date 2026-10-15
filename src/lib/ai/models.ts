@@ -7,6 +7,7 @@ export const GATEWAY_MODELS: Record<string, string> = {
   "gpt-5.6-luna": "openai/gpt-5.6-luna",
   "gpt-5.6-sol": "openai/gpt-5.6-sol",
   "gemini-3.1-pro": "google/gemini-3.1-pro-preview",
+  "clinic-receptionist": "openclaw/clinic-receptionist",
 };
 
 /** Resolves a short name or openclaw/* agent/model route to a gateway model id; unknown names return null (never silently swapped). */

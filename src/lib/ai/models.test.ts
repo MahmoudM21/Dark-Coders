@@ -7,6 +7,7 @@ describe("resolveGatewayModel", () => {
     assert.equal(resolveGatewayModel("gpt-5.6-terra"), "openai/gpt-5.6-terra");
     assert.equal(resolveGatewayModel("gemini-3.1-pro"), "google/gemini-3.1-pro-preview");
     assert.equal(resolveGatewayModel("openclaw/researcher"), "openclaw/researcher");
+    assert.equal(resolveGatewayModel("clinic-receptionist"), "openclaw/clinic-receptionist");
   });
   it("uses the default model when none is picked", () => {
     assert.equal(resolveGatewayModel(undefined), "openai/gpt-6-astra");

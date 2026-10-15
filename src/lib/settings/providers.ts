@@ -37,10 +37,21 @@ export function findProvider(settings: ProviderSettings, id: string | null): Pro
   return settings.providers.find((p) => p.id === id) ?? (id === "builtin" ? BUILTIN : undefined);
 }
 
+/** The clinic reception agent: it runs through the built-in gateway path, not a direct provider. */
+export const CLINIC_PROVIDER: Provider = {
+  id: "pf-clinic-receptionist",
+  name: "Clinic receptionist · Gemini 3.8 Flash",
+  kind: "builtin",
+  baseUrl: "",
+  model: "openclaw/clinic-receptionist",
+  keySource: "none",
+};
+
 /** The V3 portfolio as ready-made providers: cloud ones run on the built-in service, local ones on this computer's Ollama. */
 export const PORTFOLIO_PROVIDERS: Provider[] = [
   ...["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol", "gemini-3.1-pro"].map((model) => ({ id: `pf-${model}`, name: `Portfolio · ${model}`, kind: "builtin" as const, baseUrl: "", model, keySource: "none" as const })),
   ...["qwen3-coder:30b", "gpt-oss:120b"].map((model) => ({ id: `pf-${model}`, name: `Portfolio · ${model}`, kind: "ollama" as const, baseUrl: KIND_INFO.ollama.baseUrl, model, keySource: "none" as const })),
+  CLINIC_PROVIDER,
 ];
 
 /** Adds any missing portfolio providers, keeping the user's own entries untouched. */
