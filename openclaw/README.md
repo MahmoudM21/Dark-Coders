@@ -40,7 +40,7 @@ npm install
 ```bash
 curl -sS "$OPENCLAW_GATEWAY_URL/v1/chat/completions" \
   -H "Content-Type: application/json" \
-  -H "Authorization: ******" \
+  -H "Authorization: Bearer $OPENCLAW_API_KEY" \
   -d '{"model":"openclaw/clinic-receptionist","messages":[{"role":"user","content":"what are your opening hours?"}]}'
 ```
 

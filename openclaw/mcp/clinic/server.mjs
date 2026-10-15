@@ -90,7 +90,7 @@ async function forwardTool(tool, args) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `******,
+        Authorization: `Bearer ${CLINIC_TOOLS_TOKEN}`,
       },
       body: JSON.stringify({ tool, args }),
       signal: timer.signal,
