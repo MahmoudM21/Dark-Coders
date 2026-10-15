@@ -14,12 +14,15 @@ These ran in this checkout and are safe to repeat:
 
 ```bash
 npm install
-npm run typecheck          # 0 errors
-npm test                   # 35 pass, 0 fail
-node --check openclaw/mcp/clinic/server.mjs
+npm run typecheck            # 0 errors
+npm test                     # 38 pass, 0 fail
+npm run clinic:mcp-smoke     # MCP handshake, 13 tools, bearer header, forwarding
+npm run build                # regenerates src/routeTree.gen.ts
 node openclaw/mcp/clinic/server.mjs   # with no env: exits 1, prints the missing-variable message
-npm run build              # regenerates src/routeTree.gen.ts
 ```
+
+`npm run clinic:api-smoke` drives the tool endpoint end to end, but it needs a
+running dev server and a database, so it is not in the verified list above.
 
 The three prompt files under `openclaw/` are byte-identical to the "Runtime
 files" blocks in `docs/PROMPTS.md` (compare them rather than trusting this line).
@@ -117,6 +120,7 @@ the Arabic line; check the spoken reply and the buttons.
 |---|---|---|
 | 1 | `أهلاً، عايز أحجز كشف أسنان` | Greeting names the clinic (عيادة ديمو لطب الأسنان) and asks which branch. Two buttons: فرع المقطم / فرع المعادي. |
 | 2 | `فرع المقطم` | The doctor's name appears once (د. محمد علي). `select_branch` succeeded — this is the step that previously failed with `BRANCH_REQUIRED`. |
+| 2b | `عايز دكتور يوسف` | `find_doctor` finds him and says he is at فرع المعادي, without the agent guessing from context. It works before a branch is chosen. |
 | 3 | `اسمي محمد علي` | Asks for the phone next (one question only). |
 | 4 | `01001112223` | Says it will save name + phone to manage the booking. Stored as `+201001112223`. |
 | 5 | `عايز السبت بعد 5` | Offers at most **3** slots with Arabic weekday/time, e.g. `السبت 5:00 م`. |
@@ -199,6 +203,24 @@ it answered 200, `delivery_failed`/`none` when the URL was unset or the post
 failed.
 
 ---
+
+## 6b. Booking Service endpoint smoke test
+
+Needs the dev server, a database and `CLINIC_TOOLS_TOKEN`:
+
+```bash
+npm run dev
+npm run clinic:api-smoke
+```
+
+It opens a session through the same RPC the bridge uses, then drives
+`/api/clinic/tools` and asserts the envelope, `retryable` and `agent_action` for
+the wrong token, missing/unknown session, `BRANCH_REQUIRED`, `NOT_FOUND`,
+`VALIDATION_ERROR`, `NOT_VERIFIED`, `SLOT_UNAVAILABLE`, `APPROVAL_PENDING`,
+`APPROVAL_NOT_FOUND`, escalation contact stripping and the rate limit. The
+approval **decision** path is excluded — the operator click goes through
+`/api/agent`, so drill it in §5 instead. It writes to the database; reset
+afterwards with `supabase/reset_demo.sql`.
 
 ## 7. Scripted conversation evaluation
 
