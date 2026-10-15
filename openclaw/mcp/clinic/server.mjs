@@ -13,52 +13,61 @@ if (!CLINIC_API_URL || !CLINIC_TOOLS_TOKEN) {
 
 const sessionId = z.string().uuid();
 const dateTime = z.string().datetime({ offset: true });
+const shortRef = z.string().trim().min(1).max(120);
 
+// NOTE: the MCP SDK's `server.tool()` takes a Zod RAW SHAPE (a plain object of
+// zod types), not a z.object(...) schema. Passing a ZodObject makes registration
+// throw "expected a Zod schema or ToolAnnotations".
 const schemas = {
-  get_clinic_info: z.object({ session_id: sessionId }),
-  select_branch: z.object({ session_id: sessionId, branch_ref: z.string().trim().min(1).max(120) }),
-  identify_patient: z.object({ session_id: sessionId, full_name: z.string().trim().min(1).max(120), phone: z.string().trim().min(1).max(60) }),
-  check_availability: z.object({
+  get_clinic_info: { session_id: sessionId },
+  select_branch: { session_id: sessionId, branch_ref: shortRef },
+  find_doctor: { session_id: sessionId, query: z.string().trim().min(1).max(120) },
+  identify_patient: {
     session_id: sessionId,
-    doctor_ref: z.string().trim().min(1).max(120).optional(),
-    visit_type_code: z.string().trim().min(1).max(120).optional(),
+    full_name: z.string().trim().min(1).max(120),
+    phone: z.string().trim().min(1).max(60),
+  },
+  check_availability: {
+    session_id: sessionId,
+    doctor_ref: shortRef.optional(),
+    visit_type_code: shortRef.optional(),
     from: dateTime,
     to: dateTime,
     part_of_day: z.enum(["morning", "afternoon", "evening"]).optional(),
     limit: z.number().int().min(1).max(5).optional(),
-  }),
-  hold_slot: z.object({
+  },
+  hold_slot: {
     session_id: sessionId,
-    doctor_ref: z.string().trim().min(1).max(120),
-    visit_type_code: z.string().trim().min(1).max(120).optional(),
+    doctor_ref: shortRef,
+    visit_type_code: shortRef.optional(),
     starts_at: dateTime,
-  }),
-  request_approval: z.object({
+  },
+  request_approval: {
     session_id: sessionId,
     action: z.enum(["confirm_booking", "reschedule_appointment", "cancel_appointment"]),
-    appointment_ref: z.string().trim().min(1).max(120),
+    appointment_ref: shortRef,
     new_starts_at: dateTime.optional(),
     reason: z.string().trim().max(500).optional(),
-  }),
-  confirm_booking: z.object({ session_id: sessionId, approval_id: z.string().trim().min(1).max(120) }),
-  reschedule_appointment: z.object({ session_id: sessionId, approval_id: z.string().trim().min(1).max(120) }),
-  cancel_appointment: z.object({ session_id: sessionId, approval_id: z.string().trim().min(1).max(120) }),
-  list_my_appointments: z.object({ session_id: sessionId }),
-  add_note: z.object({
+  },
+  confirm_booking: { session_id: sessionId, approval_id: shortRef },
+  reschedule_appointment: { session_id: sessionId, approval_id: shortRef },
+  cancel_appointment: { session_id: sessionId, approval_id: shortRef },
+  list_my_appointments: { session_id: sessionId },
+  add_note: {
     session_id: sessionId,
     kind: z.enum(["note", "summary"]),
     body: z.string().trim().min(1).max(2000),
-    appointment_ref: z.string().trim().min(1).max(120).optional(),
-  }),
-  escalate_to_human: z.object({
+    appointment_ref: shortRef.optional(),
+  },
+  escalate_to_human: {
     session_id: sessionId,
     severity: z.enum(["emergency", "urgent", "handoff"]),
     reason: z.string().trim().min(1).max(500),
     summary: z.string().trim().min(1).max(2000),
-    branch: z.string().trim().max(120).optional(),
+    branch: shortRef.optional(),
     caller_name: z.string().trim().max(120).optional(),
     caller_phone: z.string().trim().max(60).optional(),
-  }),
+  },
 };
 
 const toolNames = Object.keys(schemas);

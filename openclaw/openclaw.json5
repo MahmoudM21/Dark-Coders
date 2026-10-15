@@ -33,6 +33,7 @@
           allow: [
             "mcp.clinic.get_clinic_info",
             "mcp.clinic.select_branch",
+            "mcp.clinic.find_doctor",
             "mcp.clinic.identify_patient",
             "mcp.clinic.check_availability",
             "mcp.clinic.hold_slot",

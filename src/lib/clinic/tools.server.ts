@@ -166,6 +166,14 @@ export async function runTool(tool: ToolName | string, args: unknown, ctx: ToolC
         ctx.request_id,
       );
       break;
+    case "find_doctor":
+      result = await callToolRpc(
+        callRpcFn,
+        "clinic_find_doctor",
+        { p_session: ctx.session_id, p_query: (input as ToolInputMap["find_doctor"]).query },
+        ctx.request_id,
+      );
+      break;
     case "identify_patient": {
       const patient = input as ToolInputMap["identify_patient"];
       const phone = normalizePhone(patient.phone);

@@ -23,11 +23,11 @@ code decides and executes, and a human approves anything that changes a booking.
   injects the clinic context, intercepts the Approve/Deny click, validates and
   repairs the model's JSON, and attaches the approval proposal **from the
   database** rather than from the model.
-- The model-facing tool set of `docs/ARCHITECTURE.md` §6.2 is exposed over an MCP
-  stdio proxy, including `select_branch` — the caller picks the branch in
-  conversation, because there is no branch in the server environment.
-  (The amendment asks for "13 tools including select_branch"; the schema,
-  dispatcher and proxy currently implement 12. See `docs/PROGRESS.md`.)
+- **13 tools** are exposed over an MCP stdio proxy and verified by
+  `npm run clinic:mcp-smoke`. Two of them exist because there is no branch in the
+  server environment: `select_branch` (the caller picks the branch in
+  conversation) and `find_doctor` (the caller names a dentist and learns which
+  branch he works at, without guessing from context).
 
 Design details, data model and contracts live in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md);
 the build prompts are in [`docs/PROMPTS.md`](docs/PROMPTS.md).
@@ -139,6 +139,7 @@ cp .env.example .env               # Supabase, CLINIC_TOOLS_TOKEN, gateway URL
 - `npm test` — `node --test`
 - `npm run clinic:preflight` — pre-demo readiness checks
 - `npm run clinic:webhook-echo` — local escalation receiver for testing
+- `npm run clinic:mcp-smoke` — asserts the MCP proxy's 13-tool set over stdio
 - `npm run lint` — ESLint
 
 ### Architecture reference
@@ -177,10 +178,11 @@ The full list is `docs/ARCHITECTURE.md` §10. The ones that matter for a demo:
 ## Verified vs not verified
 
 **Verified in this checkout:** `npm run typecheck` (0 errors) and `npm test`
-(35/35) pass; `npm run build` succeeds and regenerates the route tree; the MCP
-proxy refuses to start without its env and its auth header is correct; the three
-prompt files are byte-identical to `docs/PROMPTS.md`; the webhook echo receives
-an escalation and answers 200.
+(38/38) pass; `npm run build` succeeds and regenerates the route tree; the MCP
+proxy answers the MCP handshake and lists exactly the 13 expected tools
+(`npm run clinic:mcp-smoke`), refuses to start without its env, and sends the
+bearer token; the three prompt files are byte-identical to `docs/PROMPTS.md`;
+the webhook echo receives an escalation and answers 200.
 
 **Not verified here — needs a person at the machine:** the SQL smoke test
 (`== ALL CHECKS PASSED`), because no PostgreSQL was available in this

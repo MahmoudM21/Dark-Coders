@@ -102,6 +102,7 @@ const dateTimeString = nonEmpty.refine((value) => Number.isFinite(Date.parse(val
 export const toolNames = [
   "get_clinic_info",
   "select_branch",
+  "find_doctor",
   "identify_patient",
   "check_availability",
   "hold_slot",
@@ -123,6 +124,7 @@ export const requestApprovalActionSchema = z.enum([
 
 export const getClinicInfoInputSchema = z.object({}).strict();
 export const selectBranchInputSchema = z.object({ branch_ref: nonEmpty.max(120) }).strict();
+export const findDoctorInputSchema = z.object({ query: nonEmpty.max(120) }).strict();
 export const identifyPatientInputSchema = z
   .object({
     full_name: nonEmpty.max(120),
@@ -183,6 +185,7 @@ export const escalateToHumanInputSchema = z
 export const toolInputSchemas = {
   get_clinic_info: getClinicInfoInputSchema,
   select_branch: selectBranchInputSchema,
+  find_doctor: findDoctorInputSchema,
   identify_patient: identifyPatientInputSchema,
   check_availability: checkAvailabilityInputSchema,
   hold_slot: holdSlotInputSchema,
@@ -198,6 +201,7 @@ export const toolInputSchemas = {
 export type ToolInputMap = {
   get_clinic_info: z.infer<typeof getClinicInfoInputSchema>;
   select_branch: z.infer<typeof selectBranchInputSchema>;
+  find_doctor: z.infer<typeof findDoctorInputSchema>;
   identify_patient: z.infer<typeof identifyPatientInputSchema>;
   check_availability: z.infer<typeof checkAvailabilityInputSchema>;
   hold_slot: z.infer<typeof holdSlotInputSchema>;

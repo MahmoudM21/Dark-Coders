@@ -801,6 +801,62 @@ begin
     -- NOTE: no prices here on purpose. If a price is not in this payload the agent must say it does not know.
 end $$;
 
+-- Read-only: the caller names a dentist and learns which branch he works at.
+-- Tier T0 — no approval, and it does NOT require a branch to be chosen yet,
+-- because naming a doctor is one of the ways a caller picks a branch.
+-- Matches on slug, on a full-name substring, or on any single name word, in
+-- either language, so "يوسف", "el-refaie" and "dr-yousef-el-refaie" all work.
+-- Returns NOT_FOUND with the query echoed back when nothing matches; never guesses.
+create or replace function clinic_find_doctor(p_session uuid, p_query text)
+returns jsonb language plpgsql stable as $$
+declare s call_sessions; v_q text; v_matches jsonb;
+begin
+  select * into s from call_sessions where id = p_session;
+  if not found then return clinic_err('NOT_FOUND', 'Unknown session'); end if;
+  if p_query is null or trim(p_query) = '' then
+    return clinic_err('VALIDATION_ERROR', 'A doctor name is required');
+  end if;
+  v_q := lower(trim(p_query));
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'doctor_ref', d.slug,
+           'name_en', d.full_name_en,
+           'name_ar', d.full_name_ar,
+           'specialty_en', sp.name_en,
+           'specialty_ar', sp.name_ar,
+           'branch_ref', b.slug,
+           'branch_name', b.name,
+           'branch_name_ar', b.name_ar,
+           'address', b.address,
+           'address_ar', b.address_ar,
+           'branch_phone', b.phone,
+           'hours', (select coalesce(jsonb_agg(jsonb_build_object(
+                       'weekday_en', (array['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'])[h.weekday + 1],
+                       'weekday_ar', (array['الأحد','الإثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'])[h.weekday + 1],
+                       'opens', to_char(h.opens, 'HH24:MI'), 'closes', to_char(h.closes, 'HH24:MI')) order by h.weekday, h.opens), '[]')
+                     from branch_hours h where h.branch_id = b.id)
+         ) order by d.full_name_en), '[]')
+    into v_matches
+  from doctors d
+  left join specialties sp on sp.id = d.specialty_id
+  join doctor_schedules ds on ds.doctor_id = d.id
+  join branches b on b.id = ds.branch_id
+  where d.tenant_id = s.tenant_id and d.active
+    and (lower(d.slug) = v_q
+         or lower(d.full_name_en) like '%' || v_q || '%'
+         or coalesce(lower(d.full_name_ar), '') like '%' || v_q || '%'
+         or v_q = any (string_to_array(lower(d.full_name_en), ' '))
+         or v_q = any (string_to_array(coalesce(lower(d.full_name_ar), ''), ' ')));
+
+  if v_matches = '[]'::jsonb then
+    return clinic_err('NOT_FOUND', 'No doctor matches that name', jsonb_build_object('query', left(p_query, 120)));
+  end if;
+  return jsonb_build_object('ok', true, 'data', jsonb_build_object(
+    'query', left(p_query, 120),
+    'doctors', v_matches));
+end $$;
+
+
 -- =====================================================================
 -- Security: deny-by-default, service role only
 -- =====================================================================
