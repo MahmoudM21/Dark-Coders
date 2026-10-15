@@ -230,6 +230,22 @@ export type ToolErr = {
   meta: { request_id: string; latency_ms: number };
 };
 
+/** The shape returned by the SQL functions (and by a failed RPC) before `meta` is added. */
+export type OkEnvelope<T = unknown> = { ok: true; data: T };
+export type ErrorEnvelope = { ok: false; error: ToolError };
+export type Envelope<T = unknown> = OkEnvelope<T> | ErrorEnvelope;
+
+/** Narrows an untyped RPC result to the failure envelope. */
+export function isErrorEnvelope(value: unknown): value is ErrorEnvelope {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value as { ok?: unknown }).ok === false &&
+    typeof (value as { error?: unknown }).error === "object" &&
+    (value as { error?: unknown }).error !== null
+  );
+}
+
 export function fail(code: ErrorCode, message: string, details?: Record<string, unknown>) {
   return {
     ok: false,

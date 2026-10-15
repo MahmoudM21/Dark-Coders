@@ -1,4 +1,4 @@
-import { fail } from "./contracts";
+import { fail, type Envelope } from "./contracts.ts";
 
 type RpcOptions = {
   timeoutMs?: number;
@@ -11,7 +11,11 @@ function asMessage(value: unknown): string {
   return "Unknown error";
 }
 
-export async function callRpc(fn: string, args: Record<string, unknown>, options: RpcOptions = {}) {
+export async function callRpc(
+  fn: string,
+  args: Record<string, unknown>,
+  options: RpcOptions = {},
+): Promise<Envelope> {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   const timeoutMs = options.timeoutMs ?? 8000;
   const requestId = options.requestId ?? "";
@@ -39,7 +43,8 @@ export async function callRpc(fn: string, args: Record<string, unknown>, options
 
     const latency = Date.now() - started;
     console.error(`[clinic.rpc] fn=${fn} request_id=${requestId} latency_ms=${latency}`);
-    return result.data;
+    // The SQL functions return the {ok,data}/{ok,error} envelope as jsonb; PostgREST hands it back untyped.
+    return (result.data as Envelope | null | undefined) ?? fail("INTERNAL", `${fn} returned no data`);
   } catch (error) {
     const latency = Date.now() - started;
     const message = asMessage(error);

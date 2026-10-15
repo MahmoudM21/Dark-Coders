@@ -210,6 +210,7 @@ export const Route = createFileRoute("/api/agent")({
         const tenantSlug = process.env["CLINIC_TENANT_SLUG"] || "demo-dental";
 
         const { callRpc } = await import("@/lib/clinic/db.server");
+        const { isErrorEnvelope } = await import("@/lib/clinic/contracts");
         const openSession = await callRpc(
           "clinic_open_session",
           {
@@ -220,7 +221,7 @@ export const Route = createFileRoute("/api/agent")({
           },
           { requestId: clinicSessionId },
         );
-        if (openSession && typeof openSession === "object" && "ok" in openSession && openSession.ok === false) {
+        if (isErrorEnvelope(openSession)) {
           return json({ error: openSession.error.message }, 502);
         }
 
@@ -239,7 +240,7 @@ export const Route = createFileRoute("/api/agent")({
             { requestId: clinicSessionId },
           );
 
-          if (decision && typeof decision === "object" && "ok" in decision && decision.ok === false) {
+          if (isErrorEnvelope(decision)) {
             const code = decision.error.code;
             if (code === "APPROVAL_EXPIRED" || code === "NOT_FOUND" || code === "INVALID_STATE") {
               const screen = {
@@ -275,11 +276,11 @@ export const Route = createFileRoute("/api/agent")({
         }
 
         const clinicInfo = await callRpc("clinic_get_info", { p_session: clinicSessionId }, { requestId: clinicSessionId });
-        if (clinicInfo && typeof clinicInfo === "object" && "ok" in clinicInfo && clinicInfo.ok === false) {
+        if (isErrorEnvelope(clinicInfo)) {
           return json({ error: clinicInfo.error.message }, 502);
         }
 
-        const infoPayload = (clinicInfo as { data?: unknown }).data;
+        const infoPayload = clinicInfo.data;
         const contextMessages = [
           {
             role: "system",

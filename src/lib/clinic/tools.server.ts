@@ -1,18 +1,17 @@
 import { z } from "zod";
 import {
-  AGENT_ACTION,
   asErrorCode,
   fail,
   toolInputSchemas,
   toolNames,
-  type ErrorCode,
+  type Envelope,
   type ToolInputMap,
   type ToolName,
   withMeta,
-} from "./contracts";
-import { callRpc } from "./db.server";
-import { escalate } from "./escalation.server";
-import { normalizePhone } from "./phone.server";
+} from "./contracts.ts";
+import { callRpc } from "./db.server.ts";
+import { escalate } from "./escalation.server.ts";
+import { normalizePhone } from "./phone.server.ts";
 
 type ToolContext = { session_id: string; request_id: string };
 
@@ -74,27 +73,21 @@ function redactInput(input: Record<string, unknown>) {
   return redacted;
 }
 
-function errorFromEnvelope(value: unknown) {
+function errorFromEnvelope(value: unknown): Envelope {
   if (!value || typeof value !== "object") return fail("INTERNAL", "Malformed RPC error envelope");
-  const envelope = value as { code?: unknown; message?: unknown; details?: unknown; retryable?: unknown };
+  const envelope = value as { code?: unknown; message?: unknown; details?: unknown };
   const code = asErrorCode(envelope.code);
   if (!code) return fail("INTERNAL", typeof envelope.message === "string" ? envelope.message : "Unknown RPC error");
-  return {
-    ok: false,
-    error: {
-      code,
-      message: typeof envelope.message === "string" ? envelope.message : code,
-      retryable: typeof envelope.retryable === "boolean" ? envelope.retryable : false,
-      agent_action: AGENT_ACTION[code],
-      ...(envelope.details && typeof envelope.details === "object" ? { details: envelope.details as Record<string, unknown> } : {}),
-    },
-  } as const;
+  const details = envelope.details && typeof envelope.details === "object"
+    ? (envelope.details as Record<string, unknown>)
+    : undefined;
+  return fail(code, typeof envelope.message === "string" ? envelope.message : code, details);
 }
 
-function normalizeSqlResult(value: unknown) {
+function normalizeSqlResult(value: unknown): Envelope {
   if (!value || typeof value !== "object") return fail("INTERNAL", "Malformed RPC envelope");
   const envelope = value as { ok?: unknown; data?: unknown; error?: unknown };
-  if (envelope.ok === true) return { ok: true as const, data: envelope.data };
+  if (envelope.ok === true) return { ok: true, data: envelope.data };
   if (envelope.ok === false) return errorFromEnvelope(envelope.error);
   return fail("INTERNAL", "Malformed RPC envelope");
 }
@@ -121,11 +114,8 @@ async function callToolRpc(
   rpcName: string,
   args: Record<string, unknown>,
   requestId: string,
-) {
+): Promise<Envelope> {
   const rpcResult = await callRpcFn(rpcName, args, { requestId });
-  if (rpcResult && typeof rpcResult === "object" && "ok" in rpcResult && rpcResult.ok === false) {
-    return rpcResult;
-  }
   return normalizeSqlResult(rpcResult);
 }
 
@@ -162,7 +152,7 @@ export async function runTool(tool: ToolName | string, args: unknown, ctx: ToolC
   }
 
   const input = parsed.data as ToolInputMap[ToolName];
-  let result: ReturnType<typeof fail> | { ok: true; data: unknown };
+  let result: Envelope;
 
   switch (name) {
     case "get_clinic_info":

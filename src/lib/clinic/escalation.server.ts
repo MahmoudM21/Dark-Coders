@@ -1,13 +1,13 @@
-import { fail } from "./contracts";
-import { callRpc } from "./db.server";
+import { fail } from "./contracts.ts";
+import { callRpc } from "./db.server.ts";
 
 type EscalationArgs = {
   severity: "emergency" | "urgent" | "handoff";
   reason: string;
   summary: string;
-  branch?: string;
-  caller_name?: string;
-  caller_phone?: string;
+  branch?: string | undefined;
+  caller_name?: string | undefined;
+  caller_phone?: string | undefined;
 };
 
 type RpcFn = typeof callRpc;
@@ -51,9 +51,9 @@ export async function escalate(sessionId: string, args: EscalationArgs, deps: De
     { requestId: sessionId },
   );
 
-  if (opened && typeof opened === "object" && "ok" in opened && opened.ok === false) return opened;
+  if (!opened.ok) return opened;
 
-  const row = (opened as { data?: Record<string, unknown> }).data;
+  const row = opened.data as Record<string, unknown> | null | undefined;
   if (!row || typeof row !== "object") return fail("INTERNAL", "Escalation record is malformed");
 
   const escalationId = row["escalation_id"];
@@ -127,7 +127,7 @@ export async function escalate(sessionId: string, args: EscalationArgs, deps: De
     { requestId: sessionId },
   );
 
-  if (update && typeof update === "object" && "ok" in update && update.ok === false) return update;
+  if (!update.ok) return update;
 
   return {
     ok: true,

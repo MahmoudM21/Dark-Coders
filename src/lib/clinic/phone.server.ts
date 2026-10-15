@@ -21,7 +21,8 @@ export function normalizePhone(raw: string, defaultCountry: "EG" | string = "EG"
   if (cleaned.startsWith("00")) cleaned = `+${cleaned.slice(2)}`;
 
   if (defaultCountry === "EG") {
-    if (/^01\d{9}$/.test(cleaned)) return `+20${cleaned}`;
+    // Egyptian mobile "01XXXXXXXXX" (11 digits): drop the trunk 0, then add +20.
+    if (/^01\d{9}$/.test(cleaned)) return `+20${cleaned.slice(1)}`;
     if (/^20\d{10}$/.test(cleaned)) cleaned = `+${cleaned}`;
   }
 
