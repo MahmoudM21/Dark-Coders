@@ -172,6 +172,59 @@ insert into branch_hours (branch_id, weekday, opens, closes) select b.id, w, '00
 select pg_temp.assert('inside staffed hours -> live_transfer', clinic_escalate('11111111-1111-4111-8111-111111111111','urgent','needs doctor','x')->'data'->>'route' = 'live_transfer');
 select pg_temp.assert('delivery status can be recorded truthfully', clinic_escalation_update((select id from escalations order by created_at limit 1),'delivery_failed','webhook','not configured')->>'ok' = 'true');
 
+\echo '== K. Duplicate approvals are idempotent; a live hold blocks the other session'
+-- Self-contained: fresh sessions and a fresh hold, so this section does not depend on earlier state.
+select clinic_open_session('55555555-5555-4555-8555-555555555555','demo-dental') as o5 \gset
+select clinic_select_branch('55555555-5555-4555-8555-555555555555','mokattam') as sb6 \gset
+select clinic_identify_patient('55555555-5555-4555-8555-555555555555','Nour Hassan','+201009998887') as i5 \gset
+select clinic_check_availability('55555555-5555-4555-8555-555555555555', null, null, :'sat_from', :'sat_to', 'evening', 3) as avk \gset
+select (:'avk'::jsonb->'data'->'slots'->0->>'starts_at')::timestamptz as kslot \gset
+select clinic_hold_slot('55555555-5555-4555-8555-555555555555','dr-mohamed-ali',null,:'kslot') as kh \gset
+select pg_temp.assert('Nour holds a fresh slot', (:'kh'::jsonb->>'ok')::boolean);
+select :'kh'::jsonb->'data'->>'hold_ref' as kref \gset
+select clinic_create_approval('55555555-5555-4555-8555-555555555555','confirm_booking', :'kref')->'data'->>'approval_id' as kap1 \gset
+select clinic_create_approval('55555555-5555-4555-8555-555555555555','confirm_booking', :'kref')->'data'->>'approval_id' as kap2 \gset
+select pg_temp.assert('requesting approval twice for the same hold returns the SAME live approval', :'kap1' = :'kap2');
+select pg_temp.assert('...and does not insert a second row for that appointment',
+  (select count(*) from approvals a join appointments ap on ap.id = (a.params->>'appointment_id')::uuid
+     where ap.confirmation_code = :'kref') = 1);
+
+-- Session B wants the slot session A is holding.
+select clinic_open_session('66666666-6666-4666-8666-666666666666','demo-dental') as o6 \gset
+select clinic_select_branch('66666666-6666-4666-8666-666666666666','mokattam') as sb7 \gset
+select clinic_identify_patient('66666666-6666-4666-8666-666666666666','Hassan Adel','+201002223334') as i6 \gset
+select pg_temp.assert('another session cannot hold a slot that is currently held',
+  clinic_hold_slot('66666666-6666-4666-8666-666666666666','dr-mohamed-ali',null,:'kslot')->'error'->>'code' = 'SLOT_UNAVAILABLE');
+update appointments set hold_expires_at = now() - interval '1 second' where confirmation_code = :'kref';
+select pg_temp.assert('once the first hold expires the second session can take the same slot',
+  (clinic_hold_slot('66666666-6666-4666-8666-666666666666','dr-mohamed-ali',null,:'kslot')->>'ok')::boolean);
+
+\echo '== L. DST: slots across the Africa/Cairo transition stay on the local grid'
+-- Egypt observes DST. The autumn change lands at midnight at the end of a Thursday,
+-- which can repeat the local 23:00-24:00 hour, and that Thursday is a working day.
+-- Instead of asserting an exact slot count (which depends on how the repeated hour is
+-- represented), assert the invariants a timezone bug would break: local times stay on
+-- the 16:00-23:30 half-hour grid, and no two slots collapse onto the same local time.
+-- The spring change lands at midnight on a Friday, which is closed, so there is nothing
+-- to search there.
+select case when (now() at time zone 'Africa/Cairo')::date >= make_date(extract(year from (now() at time zone 'Africa/Cairo'))::int, 10, 26)
+            then extract(year from (now() at time zone 'Africa/Cairo'))::int + 1
+            else extract(year from (now() at time zone 'Africa/Cairo'))::int end as dst_year \gset
+select (select d::date from generate_series(make_date(:'dst_year'::int, 10, 25), make_date(:'dst_year'::int, 10, 31), interval '1 day') d
+         where extract(dow from d) = 4 order by d desc limit 1) as dst_thu \gset
+select (:'dst_thu'::date)::timestamp at time zone 'Africa/Cairo' as dst_from,
+       ((:'dst_thu'::date) + 1)::timestamp at time zone 'Africa/Cairo' as dst_to \gset
+select count(*) as dst_slots from clinic_search_slots(:'mok', null, :'vt', :'dst_from', :'dst_to', null, 100) \gset
+select pg_temp.assert('the last Thursday of October is a working day with slots', :'dst_slots'::int > 0);
+select pg_temp.assert('every slot across the transition is on the 16:00-23:30 local half-hour grid',
+  (select bool_and((starts_at at time zone 'Africa/Cairo')::time >= time '16:00'
+                   and (starts_at at time zone 'Africa/Cairo')::time <= time '23:30'
+                   and extract(minute from (starts_at at time zone 'Africa/Cairo'))::int % 30 = 0)
+     from clinic_search_slots(:'mok', null, :'vt', :'dst_from', :'dst_to', null, 100)));
+select pg_temp.assert('no two slots collapse onto the same local time across the transition',
+  (select count(*) = count(distinct date_trunc('minute', starts_at at time zone 'Africa/Cairo'))
+     from clinic_search_slots(:'mok', null, :'vt', :'dst_from', :'dst_to', null, 100)));
+
 \echo '== J. Security'
 select pg_temp.assert('PUBLIC cannot execute booking functions', not has_function_privilege('public','clinic_hold_slot(uuid,text,text,timestamptz)','execute'));
 select pg_temp.assert('no double-booking exists anywhere', (select count(*) from appointments a join appointments b on a.id < b.id and a.doctor_id = b.doctor_id
