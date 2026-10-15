@@ -44,7 +44,17 @@ curl -sS "$OPENCLAW_GATEWAY_URL/v1/chat/completions" \
   -d '{"model":"openclaw/clinic-receptionist","messages":[{"role":"user","content":"what are your opening hours?"}]}'
 ```
 
-## 6) Voice settings (Arabic)
+## 6) Warning: the seeded contacts are placeholders
+
+The demo seed (`supabase/seed_clinic_demo.sql`) ships **placeholder** branch
+phones, duty-manager phones and emails (`+20 2 0000000x`, `*@example.invalid`),
+and the emergency-services number is seeded as config (`123`), not hard-coded.
+Replace them with real values before any escalation test: otherwise
+`escalate_to_human` will report `delivery_failed` (or worse, page nobody) while
+the agent honestly says it could not reach the team. `npm run clinic:preflight`
+warns while placeholder addresses are still present.
+
+## 7) Voice settings (Arabic)
 
 - ASR: local Whisper-compatible server (`Settings -> Voice & Agents -> ASR engine: local`), auto language detect.
 - TTS: browser device voice with `ar-EG`/`ar-SA` voice installed, or gateway TTS.
