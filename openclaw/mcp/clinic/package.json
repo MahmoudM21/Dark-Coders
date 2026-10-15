@@ -1,0 +1,8 @@
+{
+  "name": "clinic-mcp-proxy",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.5"
+  }
+}

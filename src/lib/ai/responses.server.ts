@@ -1,18 +1,25 @@
 import { CHAT_MODEL, GATEWAY_BASE_URL, getGatewayHeaders } from "./gateway.server";
+import { JSON_INSTRUCTION } from "@/lib/voice/prompt";
 import {
   createLovableAiGatewayRunIdFetch,
   getLovableAiGatewayResponseHeaders,
   getLovableAiGatewayRunId,
 } from "./run-id.server";
 
+type StreamOptions = {
+  headers?: Record<string, string>;
+  appendJsonInstruction?: boolean;
+};
+
 export async function streamResponses(
   request: Request,
   input: Record<string, unknown>[],
   extra: Record<string, unknown> = {},
   model: string = CHAT_MODEL,
+  options: StreamOptions = {},
 ) {
   // Default to OpenClaw's OpenAI-compatible /v1/chat/completions stream unless explicitly targeting /v1/responses
-  if (!model.startsWith("openai/")) return streamChatAsResponses(request, input, model);
+  if (!model.startsWith("openai/")) return streamChatAsResponses(request, input, model, options);
   const gateway = createLovableAiGatewayRunIdFetch(getLovableAiGatewayRunId(request));
   try {
     const response = await gateway.fetch(`${GATEWAY_BASE_URL}/v1/responses`, {
@@ -21,6 +28,7 @@ export async function streamResponses(
       headers: getGatewayHeaders({
         "Content-Type": "application/json",
         "X-Lovable-AIG-SDK": "fetch",
+        ...(options.headers ?? {}),
       }),
       body: JSON.stringify({
         model,
@@ -50,18 +58,25 @@ export async function streamResponses(
 }
 
 /** Streams from OpenClaw Gateway (/v1/chat/completions) and re-emits deltas as Responses-style SSE events. */
-async function streamChatAsResponses(request: Request, input: Record<string, unknown>[], model: string) {
+async function streamChatAsResponses(request: Request, input: Record<string, unknown>[], model: string, options: StreamOptions = {}) {
   const gateway = createLovableAiGatewayRunIdFetch(getLovableAiGatewayRunId(request));
   const messages = input.map((m) => ({
     role: m["role"],
     content: ((m["content"] as { text: string }[]) ?? []).map((c) => c.text).join("\n"),
   }));
+  if (options.appendJsonInstruction) {
+    messages.push({ role: "system", content: JSON_INSTRUCTION });
+  }
   messages.push({ role: "system", content: "Reply with only the JSON object described above, no code fences." });
   try {
     const response = await gateway.fetch(`${GATEWAY_BASE_URL}/v1/chat/completions`, {
       method: "POST",
       signal: request.signal,
-      headers: getGatewayHeaders({ "Content-Type": "application/json", "X-Lovable-AIG-SDK": "fetch" }),
+      headers: getGatewayHeaders({
+        "Content-Type": "application/json",
+        "X-Lovable-AIG-SDK": "fetch",
+        ...(options.headers ?? {}),
+      }),
       body: JSON.stringify({ model, messages, stream: true }),
     });
     const headers = getLovableAiGatewayResponseHeaders(response.headers);

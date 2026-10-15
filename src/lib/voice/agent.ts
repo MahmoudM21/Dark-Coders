@@ -1,6 +1,31 @@
 import { createParser } from "eventsource-parser";
 
 export type Turn = { role: "user" | "assistant"; text: string };
+const SESSION_KEY = "clinic.session_id";
+let previousTurnCount = 0;
+
+function currentSessionId() {
+  if (typeof window === "undefined") return "";
+  const existing = sessionStorage.getItem(SESSION_KEY);
+  if (existing) return existing;
+  const created = crypto.randomUUID();
+  sessionStorage.setItem(SESSION_KEY, created);
+  return created;
+}
+
+function refreshSessionId() {
+  if (typeof window === "undefined") return "";
+  const created = crypto.randomUUID();
+  sessionStorage.setItem(SESSION_KEY, created);
+  return created;
+}
+
+function resolveSessionId(turns: Turn[]) {
+  const looksLikeNewConversation = previousTurnCount > 0 && turns.length === 1 && turns[0]?.role === "user";
+  const id = looksLikeNewConversation ? refreshSessionId() : currentSessionId();
+  previousTurnCount = turns.length;
+  return id;
+}
 
 export async function readSse(response: Response, onEvent: (data: string) => void) {
   if (!response.body) throw new Error("Empty response stream");
@@ -65,10 +90,11 @@ export async function streamAgentAnswer(
   context?: string,
   model?: string,
 ): Promise<string> {
+  const session_id = resolveSessionId(turns);
   const response = await fetch("/api/agent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ turns, context, model }),
+    body: JSON.stringify({ turns, context, model, session_id }),
     ...(signal ? { signal } : {}),
   });
   if (!response.ok) throw new Error(await readError(response, "The agent could not answer"));
