@@ -5,6 +5,7 @@ import { Mic, Square, Radio, SlidersHorizontal, Paperclip, SendHorizontal, X as 
 import { recordWav, type Recording } from "@/lib/voice/record-wav";
 import { transcribeRecording, type Turn } from "@/lib/voice/agent";
 import { transcribeLocal } from "@/lib/voice/local-asr";
+import { createFillerScheduler, type FillerScheduler } from "@/lib/voice/filler";
 import { cleanRaw, runProvider } from "@/lib/voice/providers-client";
 import { BUILTIN, KIND_INFO, findProvider, type Provider } from "@/lib/settings/providers";
 import { useProviders } from "@/components/provider-settings";
@@ -113,6 +114,7 @@ function VoiceConsole() {
   const [notice, setNotice] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const commandRef = useRef<(command: Command) => string | null>(() => null);
+  const fillerRef = useRef<FillerScheduler | null>(null);
 
   const addStep = useCallback((label: string, detail?: string, tone?: RunStep["tone"]) => {
     stepsRef.current = [...stepsRef.current, { label, at: Date.now(), ...(detail ? { detail } : {}), ...(tone ? { tone } : {}) }];
@@ -125,6 +127,24 @@ function VoiceConsole() {
     messagesRef.current = [...messagesRef.current, message];
     setMessages(messagesRef.current);
     return messagesRef.current;
+  }, []);
+
+  // One spoken filler per slow voice turn. The timer lives in lib/voice/filler so it is
+  // unit-tested; it speaks through the same TTS path as the answer, and the answer
+  // aborts it so the two never overlap. A filler is never a message.
+  useEffect(() => {
+    const scheduler = createFillerScheduler({
+      speak: (text, signal) => {
+        void speakWith(settingsRef.current.voice, text, signal).catch(() => {
+          /* best-effort: the real answer still speaks */
+        });
+      },
+    });
+    fillerRef.current = scheduler;
+    return () => {
+      scheduler.cancel();
+      fillerRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -171,6 +191,8 @@ function VoiceConsole() {
               setRun((current) => current ? { ...current, reasoning, stage: current.stage === "streaming" ? current.stage : "thinking" } : current);
             },
             onAnswer: (text) => {
+              // The answer is arriving: drop any filler (and stop its audio) immediately.
+              fillerRef.current?.answerArrived();
               if (!writing) { writing = true; addStep("Writing reply"); }
               if (opts.typing) setRun((current) => (current ? { ...current, answer: partialText(cleanRaw(text)), stage: "streaming" } : current));
             },
@@ -200,7 +222,10 @@ function VoiceConsole() {
       if (opts.speak) addStep("Speaking");
       appendMessage({ id: newId(), role: "assistant", text: screen.text, screen, reasoning: reasoningRef.current, at: Date.now(), steps: stepsRef.current, sender: used.name });
       setRun(null);
-      if (!opts.speak) return;
+      if (!opts.speak) {
+        fillerRef.current?.cancel();
+        return;
+      }
       try {
         setSpeaking(true);
         await speakWith(voiceSettings, spokenScreen(screen), signal);
@@ -208,6 +233,7 @@ function VoiceConsole() {
         if (!signal.aborted) setNotice(error instanceof Error ? error.message : "The voice engine failed");
       } finally {
         setSpeaking(false);
+        fillerRef.current?.cancel();
       }
     },
     [addStep, appendMessage],
@@ -290,8 +316,16 @@ function VoiceConsole() {
         addStep("Heard", heard.length > 60 ? `${heard.slice(0, 60)}…` : heard);
         const history = appendMessage(userMessage);
         setRun((current) => (current ? { ...current, heard, stage: "planning" } : current));
+        // This turn started from the microphone: if the model is still thinking after
+        // FILLER_DELAY_MS the console says one short phrase so the caller knows they were
+        // heard. It is not added to the transcript and never states a result.
+        fillerRef.current?.arm(heard, {
+          voiceInput: true,
+          voiceRepliesEnabled: settingsRef.current.runOptions.speak,
+        });
         await runAgent(history, controller.signal);
       } catch (error) {
+        fillerRef.current?.cancel();
         if (controller.signal.aborted) {
           setRun(null);
           return;
