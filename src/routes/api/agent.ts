@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { COMMAND_NAMES } from "@/lib/voice/screen";
 import { JSON_INSTRUCTION, OUTPUT_FORMAT, SYSTEM_PROMPT, planContextMessage } from "@/lib/voice/prompt";
+import { sanitizeScreenPayload } from "@/lib/voice/sanitize";
 
 type Turn = { role: "user" | "assistant"; text: string };
 
@@ -402,7 +403,10 @@ export const Route = createFileRoute("/api/agent")({
                 send({ type: "response.reasoning_summary_text.delta", delta });
               });
 
-              let parsed = screenSchema.safeParse(JSON.parse(extractJson(raw)));
+              // Sanitise before validating: emoji and markdown are stripped from the text,
+              // labels and values, and a screen that was only emoji becomes "" and fails
+              // the schema below, which sends it down the repair path instead of speaking it.
+              let parsed = screenSchema.safeParse(sanitizeScreenPayload(JSON.parse(extractJson(raw))));
               if (!parsed.success) {
                 await auditBridgeEvent({
                   session_id: clinicSessionId,
@@ -433,7 +437,7 @@ export const Route = createFileRoute("/api/agent")({
                   { headers: { "x-openclaw-session-key": `clinic:${clinicSessionId}` }, appendJsonInstruction: true },
                 );
                 raw = await collectModelOutput(repairResponse, () => {});
-                parsed = screenSchema.safeParse(JSON.parse(extractJson(raw)));
+                parsed = screenSchema.safeParse(sanitizeScreenPayload(JSON.parse(extractJson(raw))));
               }
 
               const safe = parsed.success
