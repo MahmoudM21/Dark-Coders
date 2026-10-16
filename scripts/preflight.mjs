@@ -42,6 +42,17 @@ function env(name) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+// The Postgres DSN is accepted under either name: DATABASE_URL (the psql convention used in the
+// docs) or POSTGRES_URL (what this project's .env ships). Whichever is set is used, and only the
+// variable NAME is ever printed — never the value.
+function postgresDsn() {
+  for (const name of ["DATABASE_URL", "POSTGRES_URL"]) {
+    const value = env(name);
+    if (value) return { name, value };
+  }
+  return null;
+}
+
 async function withTimeout(promise, ms) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
@@ -74,6 +85,20 @@ function checkEnvironment(logPath) {
   }
   if (!env("SUPABASE_SERVICE_ROLE_KEY") && process.env["VITE_SUPABASE_SERVICE_ROLE_KEY"]) {
     record("FAIL", "environment security", "SUPABASE_SERVICE_ROLE_KEY must not be exposed with a VITE_ prefix");
+  }
+  const dsn = postgresDsn();
+  if (dsn) {
+    record(
+      "PASS",
+      "postgres dsn",
+      `${dsn.name} is set — needed by the psql steps: supabase/migrations, seed_clinic_demo.sql, reset_demo.sql, tests/clinic_smoke.sql`,
+    );
+  } else {
+    record(
+      "WARN",
+      "postgres dsn",
+      "neither DATABASE_URL nor POSTGRES_URL is set — the database check below still works over the Supabase REST API, but the psql steps (migration, seed_clinic_demo.sql, reset_demo.sql, tests/clinic_smoke.sql) need one of them in .env",
+    );
   }
   record("PASS", "env file", logPath ? `loaded ${logPath}` : "no .env file found; relying on the shell environment");
 }

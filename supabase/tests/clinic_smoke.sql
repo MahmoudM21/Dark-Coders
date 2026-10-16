@@ -229,4 +229,75 @@ select pg_temp.assert('no two slots collapse onto the same local time across the
 select pg_temp.assert('PUBLIC cannot execute booking functions', not has_function_privilege('public','clinic_hold_slot(uuid,text,text,timestamptz)','execute'));
 select pg_temp.assert('no double-booking exists anywhere', (select count(*) from appointments a join appointments b on a.id < b.id and a.doctor_id = b.doctor_id
   and a.status in ('held','booked') and b.status in ('held','booked') and tstzrange(a.starts_at,a.ends_at) && tstzrange(b.starts_at,b.ends_at)) = 0);
+\echo '== M. reset_demo.sql clears real call data and keeps the clinic setup'
+
+-- A rehearsal leaves a confirmed booking behind (appointments.approval_id set — the foreign
+-- key that used to make reset_demo.sql fail), plus a live hold, a note and an escalation.
+select clinic_open_session('77777777-7777-4777-8777-777777777777','demo-dental') as m_open \gset
+select clinic_select_branch('77777777-7777-4777-8777-777777777777','mokattam') as m_branch \gset
+select clinic_identify_patient('77777777-7777-4777-8777-777777777777','Mariam Fouad','+201005556667') as m_id \gset
+select clinic_check_availability('77777777-7777-4777-8777-777777777777', null, null, :'sat_from', :'sat_to', null, 2) as m_av \gset
+select (:'m_av'::jsonb->'data'->'slots'->0->>'starts_at')::timestamptz as m_book_at \gset
+select clinic_hold_slot('77777777-7777-4777-8777-777777777777','dr-mohamed-ali',null,:'m_book_at') as m_hold \gset
+select :'m_hold'::jsonb->'data'->>'hold_ref' as m_ref \gset
+select clinic_create_approval('77777777-7777-4777-8777-777777777777','confirm_booking', :'m_ref')->'data'->>'approval_id' as m_apr \gset
+select clinic_decide_approval(:'m_apr','77777777-7777-4777-8777-777777777777','approved','operator:demo') as m_dec \gset
+select clinic_confirm_booking('77777777-7777-4777-8777-777777777777', :'m_apr') as m_confirm \gset
+select pg_temp.assert('rehearsal: the booking was confirmed', (:'m_confirm'::jsonb->>'ok')::boolean);
+select pg_temp.assert('rehearsal: that appointment carries the approval it used (the FK reset_demo.sql must respect)',
+  (select approval_id is not null from appointments
+    where session_id = '77777777-7777-4777-8777-777777777777' and status = 'booked'));
+select clinic_add_note('77777777-7777-4777-8777-777777777777','note','rehearsal note', :'m_ref') as m_note \gset
+
+-- A second session, still mid-call: identified with a live hold at the other branch.
+select clinic_open_session('88888888-8888-4888-8888-888888888888','demo-dental') as m2_open \gset
+select clinic_select_branch('88888888-8888-4888-8888-888888888888','maadi') as m2_branch \gset
+select clinic_identify_patient('88888888-8888-4888-8888-888888888888','Tarek Sami','+201007778889') as m2_id \gset
+select clinic_check_availability('88888888-8888-4888-8888-888888888888', null, null, :'sat_from', :'sat_to', null, 1) as m2_av \gset
+select (:'m2_av'::jsonb->'data'->'slots'->0->>'starts_at')::timestamptz as m2_at \gset
+select clinic_hold_slot('88888888-8888-4888-8888-888888888888','dr-yousef-el-refaie',null,:'m2_at') as m2_hold \gset
+select pg_temp.assert('rehearsal: a second session holds a slot at the other branch', (:'m2_hold'::jsonb->>'ok')::boolean);
+select clinic_escalate('88888888-8888-4888-8888-888888888888','urgent','rehearsal','reset rehearsal') as m2_esc \gset
+select pg_temp.assert('rehearsal: an escalation exists to be cleared', (:'m2_esc'::jsonb->>'ok')::boolean);
+select pg_temp.assert('rehearsal: every table the reset clears actually holds rows (so the checks below cannot pass vacuously)',
+  (select count(*) from patients) >= 1 and (select count(*) from call_sessions) >= 1
+  and (select count(*) from appointments) >= 1 and (select count(*) from approvals) >= 1
+  and (select count(*) from escalations) >= 1 and (select count(*) from call_notes) >= 1);
+
+-- Snapshot the clinic setup, then run the REAL reset file (not a copy of its deletes).
+select (select count(*) from tenants) as c_tenants,
+       (select count(*) from branches) as c_branches,
+       (select count(*) from branch_hours) as c_hours,
+       (select count(*) from specialties) as c_specialties,
+       (select count(*) from visit_types) as c_visit_types,
+       (select count(*) from doctors) as c_doctors,
+       (select count(*) from doctor_visit_types) as c_doctor_visit_types,
+       (select count(*) from doctor_schedules) as c_schedules \gset
+
+\i supabase/reset_demo.sql
+
+select pg_temp.assert('reset_demo.sql: patients, call_sessions, appointments and approvals are all empty',
+  (select count(*) from patients) = 0 and (select count(*) from call_sessions) = 0
+  and (select count(*) from appointments) = 0 and (select count(*) from approvals) = 0);
+select pg_temp.assert('reset_demo.sql: escalations, call_notes and audit_events are empty',
+  (select count(*) from escalations) = 0 and (select count(*) from call_notes) = 0 and (select count(*) from audit_events) = 0);
+select pg_temp.assert('reset_demo.sql: the clinic setup is untouched',
+  (select count(*) from tenants) = :'c_tenants'::int
+  and (select count(*) from branches) = :'c_branches'::int
+  and (select count(*) from branch_hours) = :'c_hours'::int
+  and (select count(*) from specialties) = :'c_specialties'::int
+  and (select count(*) from visit_types) = :'c_visit_types'::int
+  and (select count(*) from doctors) = :'c_doctors'::int
+  and (select count(*) from doctor_visit_types) = :'c_doctor_visit_types'::int
+  and (select count(*) from doctor_schedules) = :'c_schedules'::int);
+
+-- Put the clinic setup back the way a rehearsal expects it: 16:00-24:00, Friday closed.
+\i supabase/seed_clinic_demo.sql
+select pg_temp.assert('re-seed: branch hours are Sat-Thu 16:00-24:00 with Friday closed',
+  (select count(*) from branch_hours) = 12 and (select count(*) from branch_hours where weekday = 5) = 0
+  and (select bool_and(opens = time '16:00' and closes = time '24:00') from branch_hours));
+select pg_temp.assert('re-seed: a whole Saturday is bookable again (14 slots per branch)',
+  (select count(*) from clinic_search_slots(:'mok', null, :'vt', :'sat_from', :'sat_to', null, 100)) = 14
+  and (select count(*) from clinic_search_slots(:'mad', null, :'vt', :'sat_from', :'sat_to', null, 100)) = 14);
+
 \echo '== ALL CHECKS PASSED'

@@ -13,13 +13,27 @@
 
 begin;
 
--- Children before parents; appointments/approvals/notes/escalations all point at
--- a call_session, and approvals may authorise an appointment.
+-- Children before parents, in the order the foreign keys actually require:
+--   call_notes    -> appointments, call_sessions
+--   appointments  -> approvals, call_sessions, patients, branches, doctors, visit_types
+--   approvals     -> call_sessions
+--   escalations   -> call_sessions, branches
+--   call_sessions -> patients, branches
+--   patients      -> tenants
+-- audit_events carries no foreign key, so its position does not matter.
+--
+-- appointments MUST be deleted before approvals. appointments.approval_id is a
+-- foreign key into approvals (appointments_approval_fk) and every confirmed
+-- booking sets it, so deleting approvals first raises
+--   ERROR: update or delete on table "approvals" violates foreign key constraint
+--          "appointments_approval_fk" on table "appointments"
+-- and, because the deletes below share one transaction, nothing is deleted at all.
+-- supabase/tests/clinic_smoke.sql section M guards this ordering.
 delete from audit_events;
 delete from call_notes;
-delete from escalations;
-delete from approvals;
 delete from appointments;
+delete from approvals;
+delete from escalations;
 delete from call_sessions;
 delete from patients;
 
