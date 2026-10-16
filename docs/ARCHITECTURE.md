@@ -329,8 +329,11 @@ connection per call. It does not, and nothing was changed. The audit command:
 
 ```bash
 grep -rn "createClient\|new Agent\|new Pool\|new Undici\|dispatcher\|Dispatcher\|Connection: close\|new HttpClient\|keepalive" \
-  --include=*.ts --include=*.tsx --include=*.mjs src/ scripts/ openclaw/mcp
+  --exclude-dir=node_modules --include=*.ts --include=*.tsx --include=*.mjs src/ scripts/ openclaw/mcp
 ```
+
+(Without `--exclude-dir=node_modules` the only hits are inside the MCP proxy's
+vendored dependencies, which are not ours to change.)
 
 | Where | What it does | Verdict |
 |---|---|---|
