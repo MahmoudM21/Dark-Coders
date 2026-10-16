@@ -14,6 +14,7 @@
     "clinic:webhook-echo": "node scripts/webhook-echo.mjs",
     "clinic:mcp-smoke": "node scripts/clinic-mcp-smoke.mjs",
     "clinic:api-smoke": "node scripts/clinic-api-smoke.mjs",
+    "clinic:latency": "node scripts/latency-probe.mjs",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
