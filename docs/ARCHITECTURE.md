@@ -322,6 +322,33 @@ erDiagram
 
 ---
 
+## 8.1 Connection reuse (audited 2026-10-16, no fix needed)
+
+The latency work asked whether anything on the clinic path builds a new client or
+connection per call. It does not, and nothing was changed. The audit command:
+
+```bash
+grep -rn "createClient\|new Agent\|new Pool\|new Undici\|dispatcher\|Dispatcher\|Connection: close\|new HttpClient\|keepalive" \
+  --include=*.ts --include=*.tsx --include=*.mjs src/ scripts/ openclaw/mcp
+```
+
+| Where | What it does | Verdict |
+|---|---|---|
+| `src/integrations/supabase/client.server.ts` | `supabaseAdmin` is a module-level lazy singleton (`_supabaseAdmin`) behind a Proxy, so the service-role client is built once per process. | Already correct — the fix the brief anticipated was not needed. |
+| `src/lib/clinic/db.server.ts`, `src/lib/clinic/tools.server.ts`, `src/routes/api/agent.ts` (2 sites), `src/routes/api/clinic/tools.ts` | Import that singleton inside handlers; none calls `createClient`. | Correct. |
+| `src/integrations/supabase/auth-middleware.ts` | Builds a client **per request** because it carries the caller's own bearer token. | Left unchanged: it cannot be shared, and it is not on the clinic path (Booker Service auth is the `CLINIC_TOOLS_TOKEN` bearer plus the service-role client). |
+| `src/integrations/supabase/client.ts` | Browser/SSR publishable-key client factory. | Not on the clinic path. |
+| `src/lib/ai/responses.server.ts`, `src/lib/ai/run-id.server.ts`, `src/lib/ai/gateway.server.ts` | Gateway calls use the global `fetch` with one extra header; no `new Agent`, no dispatcher, no `Connection: close`. Node's undici pool keeps the socket alive between turns. | Correct. |
+| `openclaw/mcp/clinic/server.mjs` | One `fetch` per tool call with a 10 s `AbortController`; no custom agent or dispatcher. | Correct. |
+| `scripts/*.mjs` | One-shot CLI processes. | A client per process is correct here. |
+
+No pooling library was added. The only connection cost the audit could not
+measure from here is undici's ~4 s default idle keep-alive on the gateway socket;
+that is bounded by the gateway being local, and the probe in `docs/TESTING.md` §9
+is what would show it on a real deployment.
+
+---
+
 ## 9. Repo changes
 
 | File | Change |
