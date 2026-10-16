@@ -215,6 +215,7 @@ export const Route = createFileRoute("/api/agent")({
         const { clinicInfoCache, parseAvailabilitySnapshot, snapshotCache, snapshotNeedsRefresh } = await import(
           "@/lib/clinic/snapshot.server"
         );
+        const { busyScreen, callModelWithRateLimitRetry } = await import("@/lib/clinic/upstream.server");
 
         // A clinic tool call costs two extra model round trips, so the bridge prefetches
         // the next free slots for every branch and injects them as data-only context. The
@@ -391,13 +392,38 @@ export const Route = createFileRoute("/api/agent")({
             const send = (event: unknown) => controller.enqueue(enc.encode(sse(event)));
 
             try {
-              const response = await streamResponses(
-                request,
-                baseInput,
-                {},
-                model,
-                { headers: { "x-openclaw-session-key": `clinic:${clinicSessionId}` }, appendJsonInstruction: true },
-              );
+              const callModel = (input: Record<string, unknown>[]) =>
+                streamResponses(request, input, {}, model, {
+                  headers: { "x-openclaw-session-key": `clinic:${clinicSessionId}` },
+                  appendJsonInstruction: true,
+                  // The clinic path needs to see a real 429 from the upstream, including
+                  // the wait it asked for. No other caller sets this, so nothing else
+                  // behaves differently.
+                  forwardRetryAfter: true,
+                });
+
+              // A 429 gets ONE automatic retry, and only when the upstream asked for a wait
+              // short enough to sit through on a voice turn. Every 429 the bridge saw is
+              // audited, and a still-busy provider is spoken as such - never as a result.
+              const auditRateLimited = async (event: { attempt: number; status: number; retryDelayMs: number | null }) => {
+                await auditBridgeEvent({
+                  session_id: clinicSessionId,
+                  actor: "bridge",
+                  event: "upstream_429",
+                  outcome: "error",
+                  error_code: "RATE_LIMITED",
+                  input: { status: event.status, attempt: event.attempt, retry_after_ms: event.retryDelayMs },
+                });
+              };
+
+              const response = await callModelWithRateLimitRetry({
+                call: () => callModel(baseInput),
+                onRateLimited: auditRateLimited,
+              });
+              if (response === null) {
+                send({ type: "response.output_text.done", text: JSON.stringify(busyScreen(locale)) });
+                return;
+              }
 
               let raw = await collectModelOutput(response, (delta) => {
                 send({ type: "response.reasoning_summary_text.delta", delta });
@@ -429,13 +455,14 @@ export const Route = createFileRoute("/api/agent")({
                   },
                 ];
 
-                const repairResponse = await streamResponses(
-                  request,
-                  repairInput,
-                  {},
-                  model,
-                  { headers: { "x-openclaw-session-key": `clinic:${clinicSessionId}` }, appendJsonInstruction: true },
-                );
+                const repairResponse = await callModelWithRateLimitRetry({
+                  call: () => callModel(repairInput),
+                  onRateLimited: auditRateLimited,
+                });
+                if (repairResponse === null) {
+                  send({ type: "response.output_text.done", text: JSON.stringify(busyScreen(locale)) });
+                  return;
+                }
                 raw = await collectModelOutput(repairResponse, () => {});
                 parsed = screenSchema.safeParse(sanitizeScreenPayload(JSON.parse(extractJson(raw))));
               }

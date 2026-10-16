@@ -9,7 +9,7 @@
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node --test src/lib/xr-room.test.ts src/lib/ai/models.test.ts src/lib/voice/local-asr.test.ts src/lib/voice/filler.test.ts src/lib/voice/sanitize.test.ts src/lib/config/unified-plan.test.ts src/lib/clinic/phone.server.test.ts src/lib/clinic/contracts.test.ts src/lib/clinic/tools.server.test.ts src/lib/clinic/escalation.server.test.ts src/lib/clinic/snapshot.server.test.ts",
+    "test": "node --test src/lib/xr-room.test.ts src/lib/ai/models.test.ts src/lib/voice/local-asr.test.ts src/lib/voice/filler.test.ts src/lib/voice/sanitize.test.ts src/lib/config/unified-plan.test.ts src/lib/clinic/phone.server.test.ts src/lib/clinic/contracts.test.ts src/lib/clinic/tools.server.test.ts src/lib/clinic/escalation.server.test.ts src/lib/clinic/snapshot.server.test.ts src/lib/clinic/upstream.server.test.ts",
     "clinic:preflight": "node scripts/preflight.mjs",
     "clinic:webhook-echo": "node scripts/webhook-echo.mjs",
     "clinic:mcp-smoke": "node scripts/clinic-mcp-smoke.mjs",

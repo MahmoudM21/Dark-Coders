@@ -9,6 +9,12 @@ import {
 type StreamOptions = {
   headers?: Record<string, string>;
   appendJsonInstruction?: boolean;
+  /**
+   * Copy the upstream `Retry-After` header onto a failed response. Off by default, so
+   * every existing caller behaves exactly as before; the clinic bridge sets it to tell
+   * a real rate limit from an ordinary failure.
+   */
+  forwardRetryAfter?: boolean;
 };
 
 export async function streamResponses(
@@ -82,6 +88,10 @@ async function streamChatAsResponses(request: Request, input: Record<string, unk
     const headers = getLovableAiGatewayResponseHeaders(response.headers);
     if (!response.ok || !response.body) {
       headers.set("Content-Type", "application/json");
+      if (options.forwardRetryAfter) {
+        const retryAfter = response.headers.get("retry-after");
+        if (retryAfter) headers.set("Retry-After", retryAfter);
+      }
       const detail = (await response.text()).slice(0, 300);
       return new Response(JSON.stringify({ error: `${model} returned ${response.status}: ${detail}` }), { status: response.status, headers });
     }
