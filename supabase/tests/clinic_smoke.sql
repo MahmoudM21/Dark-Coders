@@ -300,4 +300,81 @@ select pg_temp.assert('re-seed: a whole Saturday is bookable again (14 slots per
   (select count(*) from clinic_search_slots(:'mok', null, :'vt', :'sat_from', :'sat_to', null, 100)) = 14
   and (select count(*) from clinic_search_slots(:'mad', null, :'vt', :'sat_from', :'sat_to', null, 100)) = 14);
 
+\echo '== N. Availability prefetch: one read-only call, both branches, nothing reserved'
+-- The bridge calls this next to clinic_open_session on the first turn of a session so
+-- "what''s available?" does not need a check_availability round trip. It must be
+-- advisory: no branch selected, no writes, and a snapshot the bridge can age out.
+
+select (select count(*) from patients) as n_pat, (select count(*) from call_sessions) as n_sess,
+       (select count(*) from appointments) as n_appt, (select count(*) from approvals) as n_appr,
+       (select count(*) from escalations) as n_esc, (select count(*) from call_notes) as n_note,
+       (select count(*) from audit_events) as n_audit \gset
+
+select clinic_open_session('99999999-9999-4999-8999-999999999901','demo-dental') as n_open \gset
+select pg_temp.assert('prefetch: the session still has no branch selected', (:'n_open'::jsonb->>'ok')::boolean);
+select clinic_prefetch_availability('99999999-9999-4999-8999-999999999901') as n_pf \gset
+select pg_temp.assert('prefetch: ok, both branches returned, and no branch has to be chosen first',
+  (:'n_pf'::jsonb->>'ok')::boolean
+  and jsonb_array_length(:'n_pf'::jsonb->'data'->'branches') = 2
+  and (:'n_pf'::jsonb->'data'->>'selected_branch_ref') is null
+  and (select bool_and(b->>'branch_ref' in ('mokattam','maadi'))
+         from jsonb_array_elements(:'n_pf'::jsonb->'data'->'branches') b));
+select pg_temp.assert('prefetch: every branch names its dentist and carries exactly `limit` slots although more are free',
+  (select bool_and(jsonb_array_length(b->'slots') = 5 and (b->'slots'->0->>'doctor_ref') is not null)
+     from jsonb_array_elements(:'n_pf'::jsonb->'data'->'branches') b)
+  and (select bool_and((select count(*) from clinic_search_slots(br.id, null, :'vt', now(), now() + interval '2 days', null, 100)) > 5)
+         from branches br where br.slug in ('mokattam','maadi'))
+  and (select sum(jsonb_array_length(b->'slots')) from jsonb_array_elements(:'n_pf'::jsonb->'data'->'branches') b) = 10);
+with s as (
+  select b->>'branch_ref' as br, (x->>'starts_at')::timestamptz as at, o as pos
+  from jsonb_array_elements(:'n_pf'::jsonb->'data'->'branches') b,
+       jsonb_array_elements(b->'slots') with ordinality as t(x, o)
+), d as (select br, at, lag(at) over (partition by br order by pos) as prev from s)
+select pg_temp.assert('prefetch: slots are ordered oldest first inside each branch',
+  (select bool_and(prev is null or at > prev) from d));
+select pg_temp.assert('prefetch: no slot lands in the 21:00-22:00 break',
+  not exists (select 1 from jsonb_array_elements(:'n_pf'::jsonb->'data'->'branches') b,
+                       jsonb_array_elements(b->'slots') x
+              where x->'local'->>'time_24' in ('21:00','21:30')));
+select clinic_prefetch_availability('99999999-9999-4999-8999-999999999901', 7, 5) as n_pf7 \gset
+select pg_temp.assert('prefetch: a 7-day window always contains a Friday, and no slot lands on one',
+  (select count(*) from generate_series(0, 7) g
+    where extract(dow from (now() at time zone 'Africa/Cairo')::date + g) = 5) > 0
+  and not exists (select 1 from jsonb_array_elements(:'n_pf7'::jsonb->'data'->'branches') b,
+                           jsonb_array_elements(b->'slots') x
+                  where extract(dow from (x->'local'->>'iso_date')::date) = 5));
+select pg_temp.assert('prefetch: every slot carries spoken_ar and spoken_en for the voice layer',
+  (select bool_and(coalesce(x->'local'->>'spoken_ar','') like '%الساعة%'
+                   and coalesce(x->'local'->>'spoken_en','') <> ''
+                   and coalesce(x->'local'->>'time_24','') ~ '^[0-2][0-9]:[0-5][0-9]$')
+     from jsonb_array_elements(:'n_pf'::jsonb->'data'->'branches') b,
+          jsonb_array_elements(b->'slots') x));
+select pg_temp.assert('prefetch: generated_at is a Z-suffixed UTC instant inside the 60-second validity window',
+  (:'n_pf'::jsonb->'data'->>'generated_at') ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$'
+  and (:'n_pf'::jsonb->'data'->>'valid_for_seconds')::int = 60
+  and (:'n_pf'::jsonb->'data'->>'generated_at')::timestamptz
+        between now() - interval '60 seconds' and now() + interval '5 seconds');
+select pg_temp.assert('prefetch: unknown session -> NOT_FOUND',
+  clinic_prefetch_availability('99999999-9999-4999-8999-999999999999')->'error'->>'code' = 'NOT_FOUND');
+select pg_temp.assert('prefetch: nothing was written (only the session this section opened)',
+  (select count(*) from patients) = :'n_pat'::int
+  and (select count(*) from call_sessions) = :'n_sess'::int + 1
+  and (select count(*) from appointments) = :'n_appt'::int
+  and (select count(*) from approvals) = :'n_appr'::int
+  and (select count(*) from escalations) = :'n_esc'::int
+  and (select count(*) from call_notes) = :'n_note'::int
+  and (select count(*) from audit_events) = :'n_audit'::int);
+select pg_temp.assert('prefetch: PUBLIC and anon/authenticated cannot execute it, service_role can',
+  not has_function_privilege('public','clinic_prefetch_availability(uuid,int,int)','execute')
+  and (not exists (select 1 from pg_roles where rolname = 'anon')
+       or not has_function_privilege('anon','clinic_prefetch_availability(uuid,int,int)','execute'))
+  and (not exists (select 1 from pg_roles where rolname = 'authenticated')
+       or not has_function_privilege('authenticated','clinic_prefetch_availability(uuid,int,int)','execute'))
+  and (not exists (select 1 from pg_roles where rolname = 'service_role')
+       or has_function_privilege('service_role','clinic_prefetch_availability(uuid,int,int)','execute')));
+-- Leave no call data behind: this section is the last one in the file.
+delete from call_sessions where id = '99999999-9999-4999-8999-999999999901';
+select pg_temp.assert('prefetch: the suite still leaves no call data behind',
+  (select count(*) from call_sessions) = 0 and (select count(*) from patients) = 0
+  and (select count(*) from appointments) = 0 and (select count(*) from audit_events) = 0);
 \echo '== ALL CHECKS PASSED'

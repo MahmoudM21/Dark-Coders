@@ -211,19 +211,60 @@ export const Route = createFileRoute("/api/agent")({
 
         const { callRpc } = await import("@/lib/clinic/db.server");
         const { isErrorEnvelope } = await import("@/lib/clinic/contracts");
-        const openSession = await callRpc(
-          "clinic_open_session",
-          {
-            p_session: clinicSessionId,
-            p_tenant_slug: tenantSlug,
-            p_channel: "console_voice",
-            p_locale: locale,
-          },
-          { requestId: clinicSessionId },
+        const { clinicInfoCache, parseAvailabilitySnapshot, snapshotCache, snapshotNeedsRefresh } = await import(
+          "@/lib/clinic/snapshot.server"
         );
+
+        // A clinic tool call costs two extra model round trips, so the bridge prefetches
+        // the next free slots for every branch and injects them as data-only context. The
+        // snapshot is advisory: it reserves nothing and a stale one is never injected.
+        const cachedSnapshot = snapshotCache.get(clinicSessionId);
+        const refreshSnapshot = snapshotNeedsRefresh(cachedSnapshot, Date.now());
+        const prefetchArgs = { p_session: clinicSessionId, p_days: 2, p_limit: 5 };
+
+        // Both RPCs are independent, so they run together rather than one after the other.
+        const [openSession, firstPrefetch] = await Promise.all([
+          callRpc(
+            "clinic_open_session",
+            {
+              p_session: clinicSessionId,
+              p_tenant_slug: tenantSlug,
+              p_channel: "console_voice",
+              p_locale: locale,
+            },
+            { requestId: clinicSessionId },
+          ),
+          refreshSnapshot
+            ? callRpc("clinic_prefetch_availability", prefetchArgs, { requestId: clinicSessionId })
+            : Promise.resolve(null),
+        ]);
         if (isErrorEnvelope(openSession)) {
           return json({ error: openSession.error.message }, 502);
         }
+
+        // On the first turn the session row may still be committing while the prefetch is
+        // in flight, so NOT_FOUND there is a race rather than a failure: retry it once now
+        // that the session is open.
+        let prefetch = firstPrefetch;
+        if (prefetch && isErrorEnvelope(prefetch) && prefetch.error.code === "NOT_FOUND") {
+          prefetch = await callRpc("clinic_prefetch_availability", prefetchArgs, { requestId: clinicSessionId });
+        }
+        const freshSnapshot = prefetch ? parseAvailabilitySnapshot(prefetch, Date.now()) : null;
+        if (freshSnapshot) snapshotCache.set(clinicSessionId, freshSnapshot);
+        if (prefetch && isErrorEnvelope(prefetch)) {
+          // Carry on without a snapshot instead of inventing one. An ok envelope that simply
+          // has nothing to advertise is not a failure, so it only reaches stderr.
+          await auditBridgeEvent({
+            session_id: clinicSessionId,
+            actor: "bridge",
+            event: "prefetch_failed",
+            outcome: "error",
+            error_code: prefetch.error.code,
+          });
+        } else if (refreshSnapshot && !freshSnapshot) {
+          process.stderr.write("[bridge.prefetch] envelope carried no injectable slots\n");
+        }
+        const activeSnapshot = freshSnapshot ?? (refreshSnapshot ? null : cachedSnapshot);
 
         const lastUser = [...turns].reverse().find((turn) => turn.role === "user")?.text ?? "";
         const approvalIntent = parseApprovalIntent(lastUser);
@@ -275,12 +316,24 @@ export const Route = createFileRoute("/api/agent")({
           });
         }
 
-        const clinicInfo = await callRpc("clinic_get_info", { p_session: clinicSessionId }, { requestId: clinicSessionId });
-        if (isErrorEnvelope(clinicInfo)) {
-          return json({ error: clinicInfo.error.message }, 502);
+        // clinic_get_info only differs per tenant and per selected branch, so it is cached
+        // for five minutes under both. Without a snapshot the branch is unknown, so the
+        // cache is skipped and the fresh payload is filed under the branch it names itself —
+        // that way one session's branch state can never be served to another.
+        const infoKeyPrefix = `${tenantSlug}#`;
+        const cachedInfo = activeSnapshot ? clinicInfoCache.get(`${infoKeyPrefix}${activeSnapshot.branchRef ?? "-"}`) : null;
+        let infoPayload: Record<string, unknown>;
+        if (cachedInfo) {
+          infoPayload = cachedInfo;
+        } else {
+          const clinicInfo = await callRpc("clinic_get_info", { p_session: clinicSessionId }, { requestId: clinicSessionId });
+          if (isErrorEnvelope(clinicInfo)) {
+            return json({ error: clinicInfo.error.message }, 502);
+          }
+          infoPayload = (clinicInfo.data ?? {}) as Record<string, unknown>;
+          const payloadBranch = infoPayload["selected_branch_ref"];
+          clinicInfoCache.set(`${infoKeyPrefix}${typeof payloadBranch === "string" ? payloadBranch : "-"}`, infoPayload);
         }
-
-        const infoPayload = clinicInfo.data;
         const contextMessages = [
           {
             role: "system",
@@ -296,6 +349,14 @@ export const Route = createFileRoute("/api/agent")({
               },
             ],
           },
+          ...(activeSnapshot
+            ? [
+                {
+                  role: "system",
+                  content: [{ type: "input_text", text: activeSnapshot.text }],
+                },
+              ]
+            : []),
           ...(approvalIntent
             ? [
                 {
