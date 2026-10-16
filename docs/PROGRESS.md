@@ -1,114 +1,105 @@
 # Progress — Clinic Reception agent
 
-Branch: `main`. This session audited the interrupted work, repaired it, closed
-P6, the amendments and most of P7/P8, and stopped before the one thing that needs
-PostgreSQL.
+Branch: `perf/nemotron-latency` (never merged; `main` is untouched by this
+session). This session switched the agent's backend model to NVIDIA Nemotron 3
+Super and cut the perceived latency of a voice turn, without changing the console
+JSON contract or any non-clinic model path.
+
+Read first: `docs/ARCHITECTURE.md` (§8 model, §9 bridge), `docs/PROMPTS.md`
+(CONTEXT BLOCK + "Runtime files"), `docs/TESTING.md` (§9 is this session's
+checks), `README.md`.
 
 ## Done (this session)
 
-| Commit | Phase | What |
+| Commit | Task | What |
 |---|---|---|
-| `2595274` | P2, P5 | **Repair: the tree did not compile and its tests failed.** Fixed `normalizePhone` (Egyptian `01XXXXXXXXX` returned `+2001…`; the trunk zero must be dropped → `+201…`). Added an explicit `Envelope` type plus `isErrorEnvelope`, and rewired `db.server`/`tools.server`/`escalation.server`/`agent.ts` so error narrowing is real instead of an untyped `"ok" in x` check. Added `.ts` extensions to the clinic imports so Node's type stripping resolves them. Regenerated `src/routeTree.gen.ts` so `/api/clinic/tools` is a known route. |
-| `a2347a7` | P3 | **Repair: the MCP proxy was broken.** `server.mjs` had the literal placeholder `Authorization: \`******,` instead of `Bearer ${CLINIC_TOOLS_TOKEN}`, so every tool call would have been 401. Same placeholder in the README curl. |
-| `5849a39` | P4 | **Repair: `AGENT.md` was truncated** before its `OUTPUT FORMAT` and `Examples` sections (59 of 78 lines), so the model had no JSON contract; all three runtime files were CRLF. Rewrote them from the `docs/PROMPTS.md` blocks. |
-| `e82f3bc` | P6 | Registered the clinic agent in `src/lib/settings/voice.ts` (the roster `set_agent` validates against), aliased `clinic-receptionist` in `models.ts` (+ test), extended the `set_agent` help text, added the *Clinic receptionist · Gemini 3.8 Flash* provider preset. |
-| `c3e448d` | Amendments 3–5 | `.env.example` now names `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`. Added `scripts/preflight.mjs` (`npm run clinic:preflight`), `scripts/webhook-echo.mjs`, `supabase/reset_demo.sql`, `docs/TESTING.md`; preflight and `openclaw/README.md` warn that seed phones/emails are placeholders. |
-| `fabe385` | P8 | Rewrote the root README (what was built, decisions and why, where AI helped, how to run, limits, verified vs not) and started this file. |
-| `835436f` | P3 | Committed the MCP proxy lockfile so it installs reproducibly. |
-| `45c7d0a` | **Amendment 1** | Added the 13th tool, `find_doctor`, end to end (SQL, contracts, dispatcher, proxy schema, allow-list, spec, tests). |
-| `45c7d0a` | P3 | **Found and fixed a silent startup crash:** `server.tool()` was passed a `z.object(...)` schema, which this MCP SDK rejects at registration ("expected a Zod schema or ToolAnnotations"), so the proxy died on start. It now passes Zod raw shapes. Added `npm run clinic:mcp-smoke`. |
-| `4f4b08f` | P7.1, P7.2 | Extended `clinic_smoke.sql` (duplicate approvals, two-session hold handover, DST invariants) with no weakened assertions; added `scripts/clinic-api-smoke.mjs` (`npm run clinic:api-smoke`). |
-| (this commit) | P8 | `docs/DEMO.md` and `docs/EXTENSIONS.md`. |
+| `d4bd05d` | 1 | **Model switch, config and docs only.** `openclaw/openclaw.json5` now pins the agent to `nvidia/nvidia/nemotron-3-super-120b-a12b` (build.nvidia.com, OpenAI-compatible) with `chat_template_kwargs.enable_thinking = false` under `agents.defaults.models[…] .params` and `thinkingDefault: "off"`, and lists `google/gemini-3.8-flash` as the agent's own failover (used only when NVIDIA errors or 429s). `NVIDIA_API_KEY` documented as a **gateway** variable (`~/.openclaw/.env`), never an app one; `.env.example`, `openclaw/README.md`, `README.md`, `docs/ARCHITECTURE.md` §8, `docs/PROMPTS.md`, `docs/TESTING.md` and `scripts/preflight.mjs` reworded. `grep -ri gemini` now returns only intentional failover mentions. A/B recipe by `x-openclaw-model` header added to `openclaw/README.md`. |
+| `dfb9d86` | 2 | **Availability prefetch.** New idempotent migration `supabase/migrations/20261016000000_clinic_prefetch.sql`: `clinic_prefetch_availability(p_session, p_days=2, p_limit=5)` returns, per branch, the next free slots (via `clinic_search_slots` with the tenant's single visit type), each formatted with `clinic_fmt_local` in that branch's timezone, plus doctor/branch refs and names, `generated_at` and `valid_for_seconds` 60. Read-only, `revoke`d from public/anon/authenticated and granted to `service_role` (the original grant loop only covered the functions that existed then, so the new one is granted explicitly). Bridge: `clinic_get_info` cached per tenant+branch for 5 minutes, `clinic_open_session` and the prefetch in `Promise.all`, snapshot refreshed only when older than 60 s, injected as a data-only advisory system message, failure logged as `prefetch_failed` and the turn continues **without** it. One hard rule added identically to `docs/PROMPTS.md` and `openclaw/agents/clinic-receptionist/AGENT.md` (byte-identity re-verified with `cmp`). Unit tests for the cache TTL, the snapshot-age decision and the message formatting with injected clocks. |
+| `99c59ca` | 3 | **Spoken filler.** `src/lib/voice/filler.ts` + wiring in `src/routes/index.tsx`: voice turns only, only with voice replies on, one filler per turn after `FILLER_DELAY_MS = 1200`, Arabic phrases for Arabic input and English otherwise, spoken through the existing TTS path, aborted by the real answer. It is not a message: never in the transcript, in `turns`, or in saved history. Pure-function tests plus `node:test` mock-timer tests. |
+| `169f0cb` | 4 | **Connection-reuse audit.** Findings table in `docs/ARCHITECTURE.md` §12 (`new Agent`, `Connection: close`, undici dispatchers, per-call clients in `src/lib/clinic/*`, `src/routes/api/agent.ts`, `src/lib/ai/*`, `openclaw/mcp/clinic/server.mjs`). The Supabase admin client was already a module-level singleton; the genuine per-request clients were the clinic path building its own tool loop. No pooling library added. |
+| `4e25c99` | 5 | **Spoken-text sanitisation.** Pure `sanitizeSpoken(text)` applied to `screen.text`, choice labels and values before schema validation: strips emoji/pictographs/variation selectors/ZWJ/keycaps/flags and markdown (bold, code, headings, list markers, links → their text), collapses whitespace, and leaves Arabic (with tashkeel), Arabic punctuation, digits, `4:30` and `123` untouched. Empty after sanitising ⇒ invalid screen ⇒ repair path. 20 unit cases; `scripts/eval-conversations.mjs` gained a "no emoji / no markdown in any reply" assertion. |
+| `ccc6a4b` | 6 | **Rate-limit resilience.** Bridge maps an upstream 429 to at most ONE retry, and only when `Retry-After` is present and ≤ 2 s; otherwise a valid screen in the session locale (`الخدمة مشغولة دلوقتي، جرّب بعد ثواني.`) with `navigation: ["home"]`, plus an `audit_events` row (actor `bridge`, event `upstream_429`) — never a fake booking. The runtime prompt in both copies now calls `add_note(kind="summary")` only after a booking/cancellation/reschedule actually succeeded or after an escalation. Fake-upstream tests for the mapping. |
+| `b967605` | 7a | **Latency probe.** `scripts/latency-probe.mjs` (`npm run clinic:latency`) drives four voice-like turns through the real `/api/agent` bridge and prints ms-to-first-reasoning, ms-to-answer and the clinic tool calls counted from `audit_events`. |
+| (this commit) | 7b–7d | **Verification and docs.** See the table below. Two defect fixes: the probe counted `audit_events.created_at`, which **does not exist** (the column is `at`) so the tool-call column was always `n/a`; and it printed a table when every turn had been answered by the bridge's error path, i.e. numbers that were not model latency. It now refuses in that case (exit 2, no table) and marks partial failures row by row. The same wrong column name in four copy-pasteable operator queries in `docs/TESTING.md`, `docs/DEMO.md` and `docs/EXTENSIONS.md` was corrected. |
 
-## Status of P1–P8
+## Verification (2026-10-17, this checkout)
 
-| Phase | State |
-|---|---|
-| P0 ground truth | **UNVERIFIED** — needs a running gateway (commands below). |
-| P1 database | Files complete; **smoke test not executed here** (no PostgreSQL). |
-| P2 Booking Service | Implemented, typechecks, unit-tested. Live round trip scripted but **not executed** (no DB). |
-| P3 OpenClaw agent/MCP/config | Proxy **verified** by `clinic:mcp-smoke` (handshake, 13 tools, bearer header, forward). Agent/gateway behaviour **UNVERIFIED**. |
-| P4 Prompts + eval | Prompt files byte-identical. `scripts/eval-conversations.mjs` **still not run** and still weaker than P4 asks (see defects). |
-| P5 Bridge | Implemented (a–i). Stretch (i) live tool traces: **not implemented** — sketch in `docs/EXTENSIONS.md` §5. |
-| P6 Console registration | **Done.** |
-| P7 Hardening | 1 and 2 **written** (unrun SQL); 3 (bridge failure drill table) **not done**. |
-| P8 README + demo | README, `docs/DEMO.md`, `docs/EXTENSIONS.md` **done**. |
-
-## Decisions taken
-
-- **The 13th tool is `find_doctor`** (confirmed with the requester). Read-only,
-  tier T0, no branch required — naming a dentist is one of the ways a caller picks
-  a branch. Matches slug, name substring or any single name word, in Arabic or
-  English; `NOT_FOUND` with the query echoed back rather than a guess.
-- **`AGENT.md` was NOT edited to mention it**, because it must stay byte-identical
-  to the "Runtime files" block in `docs/PROMPTS.md`. Follow-up below.
+| Check | Result | Evidence |
+|---|---|---|
+| `npm run typecheck` | **PASS** | 0 errors, `tsc --noEmit`. |
+| `npm test` | **PASS** | 93 tests, 0 fail (22 suites). |
+| `npm run clinic:mcp-smoke` | **PASS** | MCP handshake, 13 tools, bearer header, forwarding. |
+| `npm run clinic:api-smoke` (dev server + Supabase) | **PASS** | 78 passed, 0 failed. |
+| SQL suite incl. section N | **PASS** | `== ALL CHECKS PASSED`. |
+| DB left clean and seeded | **PASS** | 0 call-data rows; 12 `branch_hours` Sat–Thu 16:00–24:00; Saturday 14 slots/branch; Friday 0. |
+| Gateway-unreachable path | **PASS** | Truthful Arabic screen, `bridge_error` audit row, no crash, probe refuses. |
+| Prompt byte-identity | **PASS** | `cmp` clean, LF preserved. |
+| Nemotron Arabic + tool-calling quality | **UNVERIFIED** | Needs a live gateway (§9.1, §9.5). |
+| Filler heard in a browser | **UNVERIFIED** | Needs a microphone (§9.2). |
+| `openclaw.json5` key names vs installed version | **UNVERIFIED** | Needs `openclaw config schema`. |
 
 ## UNVERIFIED items — exact commands
 
-1. **SQL smoke test (P1, P7.1).** No PostgreSQL and no running Docker daemon here.
+1. **The model switch end to end (task 1, the biggest unknown).** Merge
+   `openclaw/openclaw.json5` into `~/.openclaw/openclaw.json`, put
+   `NVIDIA_API_KEY` in `~/.openclaw/.env` (gateway only), then:
    ```bash
-   # postgresql-contrib required for btree_gist; PG 15+
-   export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/clinic_demo"
-   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f supabase/migrations/20261015120000_clinic_reception.sql
-   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f supabase/seed_clinic_demo.sql
-   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -P pager=off -f supabase/tests/clinic_smoke.sql
-   # must end with: == ALL CHECKS PASSED
+   openclaw config schema        # confirm agents.entries / agents.defaults.models keys
+   openclaw agents list          # the clinic-receptionist line must name the NVIDIA ref
+   openclaw gateway
    ```
-   Sections K and L are **new and never executed**. If either fails, fix the SQL
-   or the assertion — do not delete it.
-2. **API smoke (P2, P7.2).** Needs the dev server and a database:
+   Then the A/B curl pair in `openclaw/README.md` §2 — the `x-openclaw-model`
+   override and the Gemini failover are both unproven from this checkout.
+2. **Latency, Nemotron vs Gemini.**
    ```bash
-   npm run dev
-   # with .env filled in:
-   npm run clinic:api-smoke
+   npm run dev                                   # terminal 1
+   CLINIC_LATENCY_LABEL=nemotron npm run clinic:latency
+   # point the agent at google/gemini-3.8-flash, restart the gateway:
+   CLINIC_LATENCY_LABEL=gemini npm run clinic:latency
    ```
-3. **Gateway truth (P0).**
-   ```bash
-   curl -sS "$OPENCLAW_GATEWAY_URL/v1/chat/completions" \
-     -H "Content-Type: application/json" -H "Authorization: Bearer $OPENCLAW_API_KEY" \
-     -d '{"model":"openclaw/clinic-receptionist","messages":[{"role":"user","content":"what are your opening hours?"}]}'
-   ```
-   Confirm: chat-completions enabled; `x-openclaw-session-key` isolates a session;
-   whether the gateway **merges `messages` with the stored transcript** (the bridge
-   assumes not unless `OPENCLAW_GATEWAY_MERGES_HISTORY=1`); whether
-   `x-openclaw-model: google/gemini-3.8-flash` overrides; whether
-   `delta.reasoning_content` arrives.
-4. **Live conversation (P4/P5).** `EVAL_BASE_URL=http://localhost:3000 node scripts/eval-conversations.mjs`
-5. **Preflight with a filled `.env`**: `npm run clinic:preflight`.
-6. **Speech.** Whisper transcription and Arabic TTS quality are manual-only.
-7. **`openclaw/openclaw.json5` key names.** The file says at the top they are
-   unverified; check against the installed version (`openclaw config schema`).
-8. **DST.** `docs/ARCHITECTURE.md` §10.8; now partly guarded by smoke section L,
-   which has not run.
+   Paste both tables into `docs/TESTING.md` §9.5. (If your dev server is not on
+   port 3000, add `CLINIC_API_URL=http://localhost:<port>`.)
+3. **The "available times" turn needs no tool call** — `docs/TESTING.md` §9.1:
+   prove it from `audit_events` (`select at, actor, event, tool, outcome,
+   latency_ms from audit_events where session_id = '<id>' order by at`).
+4. **The filler** — `docs/TESTING.md` §9.2: set `FILLER_DELAY_MS = 1` in
+   `src/lib/voice/filler.ts`, hold the mic, speak Arabic; it must play once, not
+   appear in the transcript, and never overlap the answer.
+5. **No emoji or markdown in anything spoken** — `docs/TESTING.md` §9.3.
+6. **Missing key / rate limit honesty** — `docs/TESTING.md` §9.4.
+7. **Live conversation eval.** `EVAL_BASE_URL=http://localhost:3000 node scripts/eval-conversations.mjs`
+8. **Speech quality.** Whisper transcription and Arabic TTS are manual-only.
+9. **`docs/ARCHITECTURE.md` §10.8 DST edge**, partly guarded by smoke section L.
 
-## Known defects / caveats
+## Known risks
 
-- `scripts/eval-conversations.mjs` is weaker than P4 asks: it checks that each
-  reply parses as a screen, but does **not** assert "no booking before
-  `confirm_booking` succeeded", the emergency same-turn rule, the price-unknown
-  rule, the injection case, or that `session_id` is present in every tool call.
-  Treat its PASS table as partial.
-- The MCP proxy registers every tool with the description `Clinic tool: <name>`.
-  That is thin context for a model choosing a tool; real one-line descriptions
-  would help the agent, and `find_doctor` is the clearest candidate.
-- The bridge opens a session on every clinic request, including the approval-click
-  interception path. That is intentional (`clinic_open_session` is idempotent per
-  session id) but worth re-reading before changing.
-- `reset_demo.sql` deletes `audit_events`, which the migration makes append-only
-  for `service_role`; it must be run as the migration owner.
-- The approval regex requires `apr_[a-z0-9]{12}` while the DB generator emits
-  lower-case hex (`apr_[a-f0-9]{12}`). The regex is a superset, so it matches —
-  but if either side changes, re-check (`clinic_smoke.sql` asserts the id shape).
-- `docs/PROMPTS.md` and `openclaw/agents/clinic-receptionist/AGENT.md` do not
-  mention `find_doctor`. If you want it in the prompt, edit **both** in the same
-  commit or the byte-identity check breaks.
+- **Nemotron's Arabic and its JSON/tool-call reliability are untested.** Everything
+  downstream — the screen contract, the repair path, the prompt's rules — is
+  exercised only against the unit tests and the API smoke until the eval and the
+  human script in `docs/TESTING.md` §9 run on a live gateway. If Nemotron drifts
+  off-format, the repair path fires and the caller hears "that step could not be
+  completed", which is honest but slow.
+- **A stale availability snapshot** is bounded by design: it is advisory only and
+  is refreshed after 60 s, and `hold_slot` is authoritative, so the worst case is
+  an agent offering a slot that then fails to hold and offering another.
+- **The prefetch costs one extra DB call per session**, done in parallel with
+  `clinic_open_session`, and is read-only.
+- **The filler is client-side only**, so a browser tab that is backgrounded may
+  not speak; it never blocks or delays the answer.
+- **`NVIDIA_API_KEY` must never reach the app.** It belongs in the gateway
+  environment; the app only talks to the gateway.
+- **The failover is a config claim, not a tested path.** `google/gemini-3.8-flash`
+  exists in `openclaw.json5` as the agent's fallback, but a native agent primary is
+  strict in OpenClaw and the failover has not been observed firing.
 
 ## Next session's first action
 
-1. Bring up PostgreSQL (`postgres:16` has `btree_gist`) and run the smoke test
-   above. Sections K and L are new; everything else was passing before this
-   session and only the migration changed.
-2. Then `npm run clinic:api-smoke` against a running dev server, and P7.3 — the
-   bridge failure drill table in `docs/TESTING.md` §5 with observed behaviour.
-3. Then decide whether to update `docs/PROMPTS.md` + `AGENT.md` together to name
-   `find_doctor` in the runtime prompt.
+1. Bring up the gateway with `NVIDIA_API_KEY` and run the A/B pair in
+   `openclaw/README.md` §2 — that settles the whole model-switch question.
+2. Then `npm run clinic:latency` twice (Nemotron, Gemini) and paste the tables
+   into `docs/TESTING.md` §9.5; that is the number the task asked for.
+3. Then the human voice script in `docs/TESTING.md` §9.2–§9.4 (filler, no emoji,
+   honesty under 429).
+4. Then decide whether `find_doctor` should be named in the runtime prompt —
+   edit `docs/PROMPTS.md` and `AGENT.md` in the same commit or the byte-identity
+   check breaks.

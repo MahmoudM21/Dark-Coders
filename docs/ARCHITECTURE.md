@@ -318,7 +318,7 @@ erDiagram
 * Console: Settings → Models → provider kind *OpenClaw Gateway (/api/agent)* with model `openclaw/clinic-receptionist`. (`resolveGatewayModel` passes `openclaw/*` through; no allow-list edit needed.)
 * Secrets: `NVIDIA_API_KEY` (and `GEMINI_API_KEY`, for the fallback only) live in the **gateway** environment only (`~/.openclaw/.env`) — never in this app's `.env`, in prompts or in the browser; `CLINIC_TOOLS_TOKEN` in the server env and the MCP proxy env.
 * Gateway auth: the repo sends `OPENCLAW_API_KEY` as Bearer → set it to the gateway token.
-* **A/B check on a live gateway** (unverified here — no gateway or key in this checkout): send the same turn twice and compare `npm run clinic:latency`, once with `x-openclaw-model: nvidia/nvidia/nemotron-3-super-120b-a12b` and once with `x-openclaw-model: google/gemini-3.8-flash`.
+* **A/B check on a live gateway** (unverified here — no gateway or key in this checkout): `openclaw/README.md` §2 sends one request per model with `x-openclaw-model: nvidia/nvidia/nemotron-3-super-120b-a12b` and `x-openclaw-model: google/gemini-3.8-flash`; for whole-conversation numbers, set the agent's primary model, restart the gateway and run `npm run clinic:latency` once per model (`docs/TESTING.md` §9.5). The probe cannot inject the override header itself — the bridge, not the console, is the gateway client.
 
 ---
 

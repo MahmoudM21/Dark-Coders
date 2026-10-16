@@ -9,11 +9,17 @@
 //   * ms to the first reasoning delta (the moment the console can show progress)
 //   * ms to response.output_text.done (the moment the answer is ready to speak)
 //   * how many clinic tool calls happened in that window, counted from audit_events
-//     for the session between the request's start and end timestamps
+//     for the session between the request's start and end timestamps (the timestamp
+//     column is `at`; there is no `created_at` on that table)
 //
 // It needs a live app (npm run dev), a live OpenClaw gateway with the clinic agent
 // registered, and SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY to read audit_events. If
 // any of those is missing it refuses and says so: it never prints invented numbers.
+// A turn whose answer came from the bridge's error path (no model reply) is not a
+// latency measurement: if every turn failed that way the probe refuses instead of
+// printing a table, and if only some did it marks those rows as error-path timings.
+// The bridge records both cases in audit_events as actor 'bridge' with event
+// 'bridge_error' (the model call threw) or 'upstream_429' (provider rate-limited).
 //
 // It WRITES to the database (a session, a patient, a hold). Reset afterwards with
 // supabase/reset_demo.sql.
@@ -127,15 +133,32 @@ async function runTurn(text, sessionId, history) {
   return { started, ended: Date.now(), firstReasoningMs, answerMs, screen, error: null };
 }
 
-async function countToolCalls(supabase, sessionId, started, ended) {
+async function readAuditWindow(supabase, sessionId, started, ended) {
   const { data, error } = await supabase
     .from("audit_events")
-    .select("event,actor,created_at")
+    .select("event,actor,tool,error_code,at")
     .eq("session_id", sessionId)
-    .gte("created_at", new Date(started).toISOString())
-    .lte("created_at", new Date(ended + 2000).toISOString());
-  if (error) return { error: error.message, count: null };
-  return { count: (data ?? []).length, events: (data ?? []).map((row) => row.event).join(","), error: null };
+    .gte("at", new Date(started).toISOString())
+    .lte("at", new Date(ended + 2000).toISOString());
+  if (error) return { error: error.message, count: null, rows: [] };
+  const rows = data ?? [];
+  return { count: rows.length, rows, error: null };
+}
+
+/** A turn that never reached the model: the bridge fell back to a truthful screen. */
+function modelFailure(rows) {
+  const hit = rows.find(
+    (row) => row.actor === "bridge" && (row.event === "bridge_error" || row.event === "upstream_429"),
+  );
+  if (!hit) return null;
+  return hit.event + (hit.error_code ? " (" + hit.error_code + ")" : "");
+}
+
+function firstNote(...candidates) {
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate) return candidate;
+  }
+  return "";
 }
 
 async function main() {
@@ -159,7 +182,8 @@ async function main() {
   } catch (error) {
     refuse(
       "no live app at " + BASE + " (" + (error instanceof Error ? error.message : String(error)) + ").",
-      "Start the app first: npm run dev  — and make sure the OpenClaw gateway is running with the clinic-receptionist agent.",
+      "Start the app first: npm run dev  — and make sure the OpenClaw gateway is running with the clinic-receptionist agent." +
+        " If the app is on another port, set CLINIC_API_URL (it tried " + BASE + ").",
     );
   }
 
@@ -181,13 +205,20 @@ async function main() {
   const rows = [];
   for (const step of SCRIPT) {
     const turn = await runTurn(step.text, sessionId, history);
-    const tools = await countToolCalls(supabase, sessionId, turn.started, turn.ended);
+    const audit = await readAuditWindow(supabase, sessionId, turn.started, turn.ended);
+    const failure = modelFailure(audit.rows);
     rows.push({
       label: step.label,
       firstReasoning: turn.firstReasoningMs,
       answer: turn.answerMs,
-      tools: tools.count,
-      notes: turn.error ?? tools.error ?? (turn.screen && turn.screen.kind !== "screen" ? "non-screen answer" : ""),
+      tools: audit.count,
+      failure,
+      notes: firstNote(
+        turn.error,
+        audit.error,
+        failure ? failure + " — answer came from the bridge, not the model" : "",
+        turn.screen && turn.screen.kind !== "screen" ? "non-screen answer" : "",
+      ),
     });
     console.log("[" + step.label + "] " + (turn.error ? turn.error : "turn " + step.text));
     if (turn.screen && turn.screen.screen && turn.screen.screen.text) {
@@ -197,6 +228,27 @@ async function main() {
     if (turn.screen && turn.screen.screen && typeof turn.screen.screen.text === "string") {
       history.push({ role: "assistant", text: turn.screen.screen.text });
     }
+  }
+
+  if (rows.length > 0 && rows.every((row) => row.failure !== null)) {
+    refuse(
+      "every turn was answered by the bridge's error path, so there is no model latency to report: " +
+        rows[0].failure +
+        ".",
+      "Start the OpenClaw gateway with the clinic-receptionist agent (NVIDIA_API_KEY set) and rerun: npm run clinic:latency",
+    );
+  }
+  const errorPathTurns = rows.filter((row) => row.failure !== null);
+  if (errorPathTurns.length > 0) {
+    console.error(
+      "\nWARNING: " +
+        String(errorPathTurns.length) +
+        " of " +
+        String(rows.length) +
+        " turns never reached the model (" +
+        errorPathTurns.map((row) => row.label + ": " + row.failure).join("; ") +
+        "). Those rows are error-path timings, not model latency.\n",
+    );
   }
 
   const headers = ["Turn", "First reasoning (ms)", "Answer ready (ms)", "Clinic tool calls", "Notes"];

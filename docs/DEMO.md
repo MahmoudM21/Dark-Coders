@@ -118,7 +118,7 @@ Show `audit_events` for the session — every tool call, its outcome and its
 latency, in order:
 
 ```sql
-select created_at, actor, event, tool, outcome, error_code from audit_events order by created_at;
+select at, actor, event, tool, outcome, error_code from audit_events order by at;
 ```
 
 Then the one-sentence summary: *the model understands and speaks, deterministic

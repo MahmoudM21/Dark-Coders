@@ -59,9 +59,12 @@ curl -sS "$OPENCLAW_GATEWAY_URL/v1/chat/completions" \
   -d '{"model":"openclaw/clinic-receptionist","stream":false,"messages":[{"role":"user","content":"إيه المواعيد المتاحة؟"}]}'
 ```
 
-For end-to-end numbers instead of one curl, run `npm run clinic:latency` once
-with each header (see `docs/TESTING.md` §9). Neither the override header nor the
-failover has been exercised against a real gateway from this checkout.
+For end-to-end numbers instead of one curl, run `npm run clinic:latency` once per
+model, changing the agent's primary model in between (`docs/TESTING.md` §9.5). The
+probe measures whatever the agent's primary model currently is: it cannot inject a
+per-request override header, because the bridge — not the console — is the gateway
+client. Neither the override header nor the failover has been exercised against a
+real gateway from this checkout.
 
 ## 3) Enable chat-completions endpoint
 

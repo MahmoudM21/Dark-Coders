@@ -126,7 +126,7 @@ session id.
 
 1. In `src/routes/api/agent.ts`, while the model response is in flight, poll
    `audit_events` for this session every 400 ms for rows newer than the last seen
-   `created_at`.
+   `at` (the table's only timestamp column).
 2. Emit each as a `response.reasoning_summary_text.delta` line —
    `"check_availability → ok (84 ms)"` — which the console already renders in the
    Thinking panel. No console change needed.
