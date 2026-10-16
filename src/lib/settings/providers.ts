@@ -40,7 +40,7 @@ export function findProvider(settings: ProviderSettings, id: string | null): Pro
 /** The clinic reception agent: it runs through the built-in gateway path, not a direct provider. */
 export const CLINIC_PROVIDER: Provider = {
   id: "pf-clinic-receptionist",
-  name: "Clinic receptionist · Gemini 3.8 Flash",
+  name: "Clinic receptionist · Nemotron 3 Super",
   kind: "builtin",
   baseUrl: "",
   model: "openclaw/clinic-receptionist",

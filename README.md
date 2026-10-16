@@ -15,8 +15,9 @@ appointments in Egyptian Arabic by voice.
 The design rule is one sentence: **the LLM understands and speaks, deterministic
 code decides and executes, and a human approves anything that changes a booking.**
 
-- **Gemini 3.8 Flash** runs inside the OpenClaw agent `clinic-receptionist`
-  (console model string `openclaw/clinic-receptionist`).
+- **NVIDIA Nemotron 3 Super** runs inside the OpenClaw agent `clinic-receptionist`
+  (console model string `openclaw/clinic-receptionist`), with Gemini 3.8 Flash
+  configured only as the failover for provider errors and 429s.
 - A **deterministic Booking Service** (TypeScript + PostgreSQL functions)
   executes every state change; the model never writes to the database.
 - The **`/api/agent` bridge** is the trusted policy point: it opens the session,
@@ -50,7 +51,7 @@ flowchart LR
   end
   BR -- "/v1/chat/completions\nmodel=openclaw/clinic-receptionist\nx-openclaw-session-key" --> GW
   subgraph OC["OpenClaw Gateway"]
-    GW[Receptionist agent\nGemini 3.8 Flash] -- stdio MCP --> MCP[clinic MCP proxy]
+    GW[Receptionist agent\nNemotron 3 Super] -- stdio MCP --> MCP[clinic MCP proxy]
   end
   MCP -- "Bearer CLINIC_TOOLS_TOKEN" --> BS
   BR -- "decide approval (operator click)" --> DB
@@ -85,8 +86,9 @@ flowchart LR
   `retryable` and an `agent_action` (`ask_again`, `offer_alternatives`,
   `restart_hold`, `explain_policy`, …) so the agent behaves predictably instead
   of improvising.
-- **Secrets stay server-side.** `GEMINI_API_KEY` lives in the gateway,
-  `CLINIC_TOOLS_TOKEN` in the server and the proxy, `SUPABASE_SERVICE_ROLE_KEY`
+- **Secrets stay server-side.** `NVIDIA_API_KEY` lives in the gateway (with
+  `GEMINI_API_KEY` only for the fallback), `CLINIC_TOOLS_TOKEN` in the server and
+  the proxy, `SUPABASE_SERVICE_ROLE_KEY`
   only on the server. Nothing secret enters a prompt, the browser bundle or git.
 
 ### Where AI tools helped
@@ -122,11 +124,11 @@ cp .env.example .env               # Supabase, CLINIC_TOOLS_TOKEN, gateway URL
    ```
    `supabase/reset_demo.sql` clears call data between runs, keeping the clinic.
 2. **Console**: `npm run dev`, then Settings → Models → *Clinic receptionist ·
-   Gemini 3.8 Flash*, and Settings → Voice & Agents → agent *Clinic receptionist*
+   Nemotron 3 Super*, and Settings → Voice & Agents → agent *Clinic receptionist*
    with an Arabic ASR/TTS choice.
 3. **OpenClaw**: merge `openclaw/openclaw.json5` into
    `~/.openclaw/openclaw.json`, install the MCP proxy deps, and put
-   `GEMINI_API_KEY` in the gateway environment. See [`openclaw/README.md`](openclaw/README.md).
+   `NVIDIA_API_KEY` in the gateway environment. See [`openclaw/README.md`](openclaw/README.md).
 4. **Check it before you demo**: `npm run clinic:preflight` — it verifies env,
    database, gateway, agent, tools and speech and reports `UNVERIFIED` rather
    than guessing. [`docs/TESTING.md`](docs/TESTING.md) is the full human script.
@@ -186,7 +188,7 @@ the webhook echo receives an escalation and answers 200.
 
 **Not verified here — needs a person at the machine:** the SQL smoke test
 (`== ALL CHECKS PASSED`), because no PostgreSQL was available in this
-environment, and everything needing the OpenClaw gateway or a Gemini key: the
+environment, and everything needing the OpenClaw gateway or an NVIDIA key: the
 agent's real replies, `x-openclaw-session-key` semantics, whether `messages`
 history merges with the stored session, Whisper transcription and Arabic TTS
 quality. The exact commands for all of these are in

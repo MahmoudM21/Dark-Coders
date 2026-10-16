@@ -196,12 +196,16 @@ async function checkAgent() {
     );
     const body = (await response.text()).slice(0, 300);
     if (response.ok) {
-      record("PASS", "agent clinic-receptionist", `gateway accepted model openclaw/clinic-receptionist (HTTP ${response.status})`);
+      record(
+        "PASS",
+        "agent clinic-receptionist",
+        `gateway accepted model openclaw/clinic-receptionist (HTTP ${response.status}); the agent's own model (Nemotron 3 Super, NVIDIA_API_KEY on the gateway) is only exercised on a real turn`,
+      );
     } else {
       record(
         "FAIL",
         "agent clinic-receptionist",
-        `HTTP ${response.status}: ${body} — merge openclaw/openclaw.json5 into ~/.openclaw/openclaw.json and enable gateway.http.endpoints.chatCompletions.enabled`,
+        `HTTP ${response.status}: ${body} — merge openclaw/openclaw.json5 into ~/.openclaw/openclaw.json, enable gateway.http.endpoints.chatCompletions.enabled and set NVIDIA_API_KEY in the gateway environment (GEMINI_API_KEY too if you want the google/gemini-3.8-flash failover). A 429 here means the gateway is rate-limited upstream.`,
       );
     }
   } catch (error) {

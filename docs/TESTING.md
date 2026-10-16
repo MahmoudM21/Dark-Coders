@@ -2,7 +2,8 @@
 
 Everything here is written to be run by a human on one machine. Each step says
 what you should see and what proves it. Where a step needs the OpenClaw gateway,
-a Gemini key, Whisper or a browser, it is labelled **UNVERIFIED from the repo** —
+an NVIDIA key, a browser or a microphone, it is labelled **UNVERIFIED from the
+repo** —
 those cannot be checked from Node, so run them yourself and trust only what you
 observe.
 
@@ -95,12 +96,14 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:3000/api/clini
 - **UNVERIFIED from the repo — needs the gateway.** Merge `openclaw/openclaw.json5`
   into `~/.openclaw/openclaw.json`, replace the `/ABSOLUTE/PATH/TO/repo`
   placeholders, install the MCP proxy deps
-  (`cd openclaw/mcp/clinic && npm install`), and set `GEMINI_API_KEY` in the
-  gateway environment. The exact config key names are still unverified against
+  (`cd openclaw/mcp/clinic && npm install`), and set `NVIDIA_API_KEY` in the
+  gateway environment (`~/.openclaw/.env`) — the agent's primary model is
+  Nemotron 3 Super. `GEMINI_API_KEY` is needed too if you want the
+  `google/gemini-3.8-flash` failover to work. The exact config key names are still unverified against
   your installed OpenClaw; the file says so at the top. Check them with
   `openclaw config schema` first.
 - In the console: **Settings → Models** pick the preset *Clinic receptionist ·
-  Gemini 3.8 Flash*; the Run panel must show `openclaw/clinic-receptionist`.
+  Nemotron 3 Super*; the Run panel must show `openclaw/clinic-receptionist`.
 - **Settings → Voice & Agents**: agent *Clinic receptionist*; ASR engine
   *local* (Whisper-compatible, language auto-detect); TTS *device voice* with an
   `ar-EG`/`ar-SA` voice installed, or gateway TTS. Kokoro's default voice is
@@ -225,7 +228,7 @@ afterwards with `supabase/reset_demo.sql`.
 ## 7. Scripted conversation evaluation
 
 **UNVERIFIED from the repo — needs the running dev server plus a real gateway**,
-because the agent's replies come from Gemini.
+because the agent's replies come from the gateway model (Nemotron 3 Super).
 
 ```bash
 npm run dev
@@ -244,7 +247,7 @@ code and say what you changed.
 - Gateway semantics: chat-completions endpoint key names, whether `messages`
   history is merged with the stored session, whether `x-openclaw-model` overrides
   work, and whether `delta.reasoning_content` arrives. See `docs/PROMPTS.md` P0.
-- `Gemini 3.8 Flash` as the agent backend (needs `GEMINI_API_KEY` in the gateway).
+- `Nemotron 3 Super` as the agent backend (needs `NVIDIA_API_KEY` in the gateway; `GEMINI_API_KEY` only for the `google/gemini-3.8-flash` failover).
 - Whisper transcription and Arabic TTS quality.
 - The `openclaw/` config fragment against your installed OpenClaw version.
 - The DST edge around Egypt's autumn transition (`docs/ARCHITECTURE.md` §10.8).

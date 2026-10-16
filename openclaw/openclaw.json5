@@ -1,11 +1,35 @@
 {
   // Config fragment to merge into ~/.openclaw/openclaw.json
-  // NOTE: key names below were derived from project architecture guidance and are UNVERIFIED
-  // against docs.openclaw.ai in this environment (domain was unreachable).
+  //
+  // Key names checked against docs.openclaw.ai on 2026-10-16:
+  //   providers/nvidia, concepts/model-failover, gateway/config-agents/models,
+  //   and the per-agent "agents.entries" page (openclaw 2026.9.4 docs).
+  // Previously this file used `agents.list[{ id, model, thinking: { effort } }]`,
+  // which those pages do not describe: per-agent overrides live under
+  // `agents.entries` keyed by the agent id, and the per-agent thinking key is
+  // `thinkingDefault`. That correction is what makes the model ref below reach
+  // the clinic agent. STILL UNVERIFIED against your installed version: run
+  // `openclaw config schema` (or `openclaw doctor`) after merging and confirm
+  // the agent line with `openclaw agents list`.
+  //
+  // NVIDIA: NVIDIA_API_KEY belongs to the GATEWAY environment only
+  // (~/.openclaw/.env, or the shell that runs the gateway). It is never an app
+  // variable and never goes in the console's .env.
   gateway: {
     http: {
       endpoints: {
         chatCompletions: { enabled: true }
+      }
+    }
+  },
+  models: {
+    providers: {
+      // Nemotron is served over NVIDIA's OpenAI-compatible API. The provider
+      // auto-enables when NVIDIA_API_KEY is present; the block is declared
+      // explicitly so the baseUrl is visible to a reviewer.
+      nvidia: {
+        baseUrl: "https://integrate.api.nvidia.com/v1",
+        api: "openai-completions"
       }
     }
   },
@@ -23,12 +47,29 @@
     }
   },
   agents: {
-    list: [
-      {
-        id: "clinic-receptionist",
-        model: "google/gemini-3.8-flash",
+    defaults: {
+      models: {
+        // Thinking off is required for voice latency: without it Nemotron's chat
+        // template emits reasoning before the visible answer. A per-model
+        // `params` entry is the documented place for provider-specific fields
+        // (temperature/maxTokens live there too, but stay at their defaults:
+        // the latency win here is streaming, not sampling).
+        "nvidia/nvidia/nemotron-3-super-120b-a12b": {
+          params: { chat_template_kwargs: { enable_thinking: false } }
+        }
+      }
+    },
+    entries: {
+      "clinic-receptionist": {
+        // A native agent primary is STRICT: fallbacks apply only when the agent
+        // supplies its own non-empty list. Gemini 3.8 Flash is therefore the
+        // failover, used only if NVIDIA errors or rate-limits (429).
+        model: {
+          primary: "nvidia/nvidia/nemotron-3-super-120b-a12b",
+          fallbacks: ["google/gemini-3.8-flash"]
+        },
         workspace: "~/.openclaw/workspaces/clinic-receptionist",
-        thinking: { effort: "low" },
+        thinkingDefault: "off",
         tools: {
           allow: [
             "mcp.clinic.get_clinic_info",
@@ -58,7 +99,7 @@
         },
         skills: ["clinic-escalation", "clinic-voice-style"]
       }
-    ]
+    }
   },
   skills: {
     directory: ["/ABSOLUTE/PATH/TO/repo/openclaw/skills"]

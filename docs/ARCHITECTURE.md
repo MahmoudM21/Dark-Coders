@@ -3,7 +3,7 @@
 Demo setup: **one dental clinic, two branches (Mokattam, Maadi), one dentist per branch**. The agent knows it is speaking for this clinic and asks the caller which branch they want. More clinics can be added later as data (multi-tenant schema is kept).
 
 Built for the Dark Coders "AI & Agent Engineering" take-home (`living-ai-talk` console, OpenClaw).
-Reasoning/answer model: **Gemini 3.8 Flash** (`gemini-3.8-flash`, GA per Google's docs) running inside an OpenClaw agent.
+Reasoning/answer model: **NVIDIA Nemotron 3 Super** (`nvidia/nvidia/nemotron-3-super-120b-a12b` via build.nvidia.com) running inside an OpenClaw agent, with **Gemini 3.8 Flash** (`google/gemini-3.8-flash`) configured only as the failover for provider errors and 429s.
 Database: **PostgreSQL** (the repo already ships Supabase = Postgres, so the schema is a Supabase migration).
 
 ---
@@ -18,7 +18,7 @@ Database: **PostgreSQL** (the repo already ships Supabase = Postgres, so the sch
 | Console only accepts `{kind:"screen", screen:{text, choices≤4, navigation}, action_proposal, app_commands≤3}`. Invalid → safe error screen. Choice id `^[a-z][a-z0-9_]{0,31}$`, label ≤40, value ≤1000; proposal id ≤64, title ≤120, tool ≤80, summary ≤500. | `src/lib/voice/screen.ts` | Shapes in §6 respect these limits. |
 | Approve/Deny is **just a user message**: `Approved action [<id>] (<title> via <tool>). Proceed and report the result.` / `Denied action [<id>] (<title>). Do not execute.` | `src/routes/index.tsx` (`onDecideProposal`) | Text alone must never authorise anything → server-side approval state (§5). |
 | Blueprint: approval must be external to the model, bound to exact action, single-use, expiring; verbal "yes" alone is insufficient; connectors must never simulate results; secrets never in prompts. | `src/config/unified-plan.yaml` | These are the rules we implement. |
-| `GATEWAY_MODELS` allowlist has **no** Gemini 3.8 Flash; unknown names return 400; `openclaw/*` passes through; `undefined` model silently becomes `gpt-6-astra`. | `src/lib/ai/models.ts` | Pick the model in the OpenClaw agent config; console sends `openclaw/clinic-receptionist`. |
+| `GATEWAY_MODELS` allowlist names neither model the clinic agent runs on; unknown names return 400; `openclaw/*` passes through; `undefined` model silently becomes `gpt-6-astra`. | `src/lib/ai/models.ts` | Pick the model in the OpenClaw agent config; console sends `openclaw/clinic-receptionist`. |
 | Supabase is optional (`user_state` only), server client `supabaseAdmin` (service role). No other DB. | `supabase/`, `client.server.ts` | Add one migration; call SQL functions via `supabaseAdmin.rpc`. |
 | Tests: `node --test` on an explicit file list; tests excluded from `tsc`; strict TS incl. `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`. | `package.json`, `tsconfig.json` | New tests must be appended to the `test` script. |
 
@@ -54,7 +54,7 @@ flowchart LR
   end
   BR -- "/v1/chat/completions\nmodel=openclaw/clinic-receptionist\nx-openclaw-session-key" --> GW
   subgraph OC["OpenClaw Gateway"]
-    GW[Receptionist agent\nGemini 3.8 Flash] -- stdio MCP --> MCP[clinic MCP proxy]
+    GW[Receptionist agent\nNemotron 3 Super] -- stdio MCP --> MCP[clinic MCP proxy]
   end
   MCP -- "Bearer CLINIC_TOOLS_TOKEN" --> BS
   BR -- "decide approval (operator click)" --> DB
@@ -86,7 +86,7 @@ sequenceDiagram
   participant U as Caller / Operator
   participant C as Console
   participant B as Bridge /api/agent
-  participant A as Receptionist (OpenClaw+Gemini)
+  participant A as Receptionist (OpenClaw+Nemotron)
   participant S as Booking Service
   participant D as Postgres
   U->>C: "عايز أحجز كشف أسنان" (voice)
@@ -312,10 +312,13 @@ erDiagram
 
 ## 8. Model & OpenClaw configuration
 
-* Agent id `clinic-receptionist`, backend model `google/gemini-3.8-flash`, low thinking effort for voice latency (blueprint target: first assistant signal ≈ 1.2 s). Verify exact config keys with `openclaw config schema` / docs for your version — don't copy key names blindly.
+* Agent id `clinic-receptionist`. Backend model **NVIDIA Nemotron 3 Super** (`nvidia/nvidia/nemotron-3-super-120b-a12b`, served over NVIDIA's OpenAI-compatible API at `https://integrate.api.nvidia.com/v1`), with **Gemini 3.8 Flash** (`google/gemini-3.8-flash`) as the failover used only when NVIDIA errors or rate-limits. Verify exact config keys with `openclaw config schema` / docs for your version — don't copy key names blindly.
+* Thinking is **off** for voice latency: `chat_template_kwargs: { enable_thinking: false }` under `agents.defaults.models["nvidia/nvidia/nemotron-3-super-120b-a12b"].params`, plus `thinkingDefault: "off"` on the agent. Without it Nemotron emits reasoning before the visible answer, which pushes back the first spoken word.
+* Per-agent overrides live under `agents.entries.<agent id>`; a native agent primary is **strict**, so this agent fails over only because its own `model` object lists `fallbacks: ["google/gemini-3.8-flash"]`.
 * Console: Settings → Models → provider kind *OpenClaw Gateway (/api/agent)* with model `openclaw/clinic-receptionist`. (`resolveGatewayModel` passes `openclaw/*` through; no allow-list edit needed.)
-* Secrets: `GEMINI_API_KEY` (or Vault) lives in the **gateway** environment only; `CLINIC_TOOLS_TOKEN` in the server env and the MCP proxy env; never in prompts or the browser.
+* Secrets: `NVIDIA_API_KEY` (and `GEMINI_API_KEY`, for the fallback only) live in the **gateway** environment only (`~/.openclaw/.env`) — never in this app's `.env`, in prompts or in the browser; `CLINIC_TOOLS_TOKEN` in the server env and the MCP proxy env.
 * Gateway auth: the repo sends `OPENCLAW_API_KEY` as Bearer → set it to the gateway token.
+* **A/B check on a live gateway** (unverified here — no gateway or key in this checkout): send the same turn twice and compare `npm run clinic:latency`, once with `x-openclaw-model: nvidia/nvidia/nemotron-3-super-120b-a12b` and once with `x-openclaw-model: google/gemini-3.8-flash`.
 
 ---
 
