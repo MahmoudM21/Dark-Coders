@@ -1,6 +1,6 @@
 /** Portfolio and OpenClaw gateway models served by /api/agent, keyed by the short name shown in plans. */
 export const GATEWAY_MODELS: Record<string, string> = {
-  "openclaw/default": "openclaw/default",
+  "openclaw/clinic-receptionist": "openclaw/clinic-receptionistt",
   "dc-orchestrator": "openclaw/dc-orchestrator",
   "gpt-6-astra": "openai/gpt-6-astra",
   "gpt-5.6-terra": "openai/gpt-5.6-terra",

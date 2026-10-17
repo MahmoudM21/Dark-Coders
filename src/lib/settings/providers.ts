@@ -16,8 +16,8 @@ export type Provider = {
 export type ProviderSettings = { providers: Provider[]; activeId: string; fallbackId: string | null };
 
 export const KIND_INFO: Record<ProviderKind, { label: string; where: "built-in" | "local" | "cloud"; baseUrl: string; model: string }> = {
-  builtin: { label: "OpenClaw Gateway (/api/agent)", where: "built-in", baseUrl: "", model: "openclaw/default" },
-  openclaw: { label: "OpenClaw Gateway (Direct HTTP)", where: "local", baseUrl: "http://localhost:18789/v1", model: "openclaw/default" },
+  builtin: { label: "OpenClaw Gateway (/api/agent)", where: "built-in", baseUrl: "", model: "openclaw/clinic-receptionist" },
+  openclaw: { label: "OpenClaw Gateway (Direct HTTP)", where: "local", baseUrl: "http://localhost:18789/v1", model: "openclaw/clinic-receptionist" },
   ollama: { label: "Ollama", where: "local", baseUrl: "http://localhost:11434/v1", model: "llama3.2" },
   lmstudio: { label: "LM Studio", where: "local", baseUrl: "http://localhost:1234/v1", model: "local-model" },
   custom: { label: "Other OpenAI-compatible", where: "local", baseUrl: "http://localhost:8000/v1", model: "model-name" },
@@ -27,7 +27,7 @@ export const KIND_INFO: Record<ProviderKind, { label: string; where: "built-in" 
   openrouter: { label: "OpenRouter", where: "cloud", baseUrl: "https://openrouter.ai/api/v1", model: "openai/gpt-4o-mini" },
 };
 
-export const BUILTIN: Provider = { id: "builtin", name: "OpenClaw Gateway (/api/agent)", kind: "builtin", baseUrl: "", model: "openclaw/default", keySource: "none" };
+export const BUILTIN: Provider = { id: "builtin", name: "OpenClaw Gateway (/api/agent)", kind: "builtin", baseUrl: "", model: "openclaw/clinic-receptionist", keySource: "none" };
 
 export const PROVIDERS_KEY = "openclaw.providers";
 export const DEFAULT_PROVIDERS: ProviderSettings = { providers: [BUILTIN], activeId: "builtin", fallbackId: null };
