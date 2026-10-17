@@ -141,15 +141,21 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:3000/api/clini
 
 ## 3. Console setup
 
-- **UNVERIFIED from the repo — needs the gateway.** Merge `openclaw/openclaw.json5`
-  into `~/.openclaw/openclaw.json`, replace the `/ABSOLUTE/PATH/TO/repo`
-  placeholders, install the MCP proxy deps
-  (`cd openclaw/mcp/clinic && npm install`), and set `NVIDIA_API_KEY` in the
+- **Config merge.** `npm run clinic:openclaw-merge -- --dry-run`, read the diff,
+  then `npm run clinic:openclaw-merge`, `openclaw gateway restart`, and
+  `openclaw doctor`. The script substitutes the repo path for `__REPO_ROOT__`,
+  copies `AGENTS.md` + both skills into the agent workspace, backs the config up,
+  and refuses to write a merge the installed schema rejects. Every key in
+  `openclaw/openclaw.json5` was checked against 2026.10.4; the evidence table is in
+  [`openclaw/README.md`](../openclaw/README.md) §2. Then install the MCP proxy deps
+  (`cd openclaw/mcp/clinic && npm install`) and set `NVIDIA_API_KEY` in the
   gateway environment (`~/.openclaw/.env`) — the agent's primary model is
   Nemotron 3 Super. `GEMINI_API_KEY` is needed too if you want the
-  `google/gemini-3.8-flash` failover to work. The exact config key names are still unverified against
-  your installed OpenClaw; the file says so at the top. Check them with
-  `openclaw config schema` first.
+  `google/gemini-3.8-flash` failover to work.
+- **UNVERIFIED from the repo — needs the gateway.** That the MCP server advertises
+  the 13 `clinic__*` tools (so the agent's allowlist matches), that the tool policy
+  actually refuses a shell request, and that thinking is off on the wire. Prove the
+  first with `openclaw mcp probe clinic`; see §4 below for the rest.
 - In the console: **Settings → Models** pick the preset *Clinic receptionist ·
   Nemotron 3 Super*; the Run panel must show `openclaw/clinic-receptionist`.
 - **Settings → Voice & Agents**: agent *Clinic receptionist*; ASR engine

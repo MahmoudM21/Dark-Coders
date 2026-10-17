@@ -126,9 +126,11 @@ cp .env.example .env               # Supabase, CLINIC_TOOLS_TOKEN, gateway URL
 2. **Console**: `npm run dev`, then Settings → Models → *Clinic receptionist ·
    Nemotron 3 Super*, and Settings → Voice & Agents → agent *Clinic receptionist*
    with an Arabic ASR/TTS choice.
-3. **OpenClaw**: merge `openclaw/openclaw.json5` into
-   `~/.openclaw/openclaw.json`, install the MCP proxy deps, and put
-   `NVIDIA_API_KEY` in the gateway environment. See [`openclaw/README.md`](openclaw/README.md).
+3. **OpenClaw**: `npm run clinic:openclaw-merge -- --dry-run`, then
+   `npm run clinic:openclaw-merge`, then `openclaw gateway restart`. Install the
+   MCP proxy deps and put `NVIDIA_API_KEY` in the gateway environment. The merge
+   script is safe to re-run: it only writes the keys it owns and backs up first.
+   See [`openclaw/README.md`](openclaw/README.md).
 4. **Check it before you demo**: `npm run clinic:preflight` — it verifies env,
    database, gateway, agent, tools and speech and reports `UNVERIFIED` rather
    than guessing. [`docs/TESTING.md`](docs/TESTING.md) is the full human script.
@@ -139,6 +141,7 @@ cp .env.example .env               # Supabase, CLINIC_TOOLS_TOKEN, gateway URL
 - `npm run build` — client, SSR and Nitro server bundles
 - `npm run typecheck` — `tsc --noEmit`
 - `npm test` — `node --test`
+- `npm run clinic:openclaw-merge` — merge the OpenClaw config fragment (add `-- --dry-run` first)
 - `npm run clinic:preflight` — pre-demo readiness checks
 - `npm run clinic:webhook-echo` — local escalation receiver for testing
 - `npm run clinic:mcp-smoke` — asserts the MCP proxy's 13-tool set over stdio

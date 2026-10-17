@@ -216,10 +216,17 @@ const displayPath = (pathArray) => {
   return output.replace(/^\./, "");
 };
 
+/**
+ * A bare `${VAR}` / `${VAR:-default}` reference names an environment variable; it
+ * carries no secret, so it is safe (and more useful) to print it as-is.
+ */
+const ENV_REFERENCE = /^\$\{[A-Z_][A-Z0-9_]*(?::-[^{}$]*)?\}$/;
+const isEnvReference = (value) => typeof value === "string" && ENV_REFERENCE.test(value.trim());
+
 /** Render a value for output, redacting secret-bearing keys. */
 function render(pathArray, value) {
   const key = pathArray[pathArray.length - 1] ?? "";
-  if (SECRET_KEY.test(key)) return REDACTED;
+  if (SECRET_KEY.test(key) && !isEnvReference(value)) return REDACTED;
   if (typeof value === "string") return JSON.stringify(value);
   if (Array.isArray(value)) return JSON.stringify(value.length > 6 ? [...value.slice(0, 6), `…${value.length - 6} more`] : value);
   return JSON.stringify(value);
@@ -456,8 +463,8 @@ function main() {
   // Prove the redaction works instead of only claiming it: list every secret
   // still in the config, with its value withheld.
   const secrets = [...afterLeaves.values()]
+    .filter(({ trail, value }) => SECRET_KEY.test(trail[trail.length - 1] ?? "") && !isEnvReference(value))
     .map(({ trail }) => trail)
-    .filter((trail) => SECRET_KEY.test(trail[trail.length - 1] ?? ""))
     .sort((a, b) => displayPath(a).localeCompare(displayPath(b)));
   if (secrets.length > 0) {
     out.push("");

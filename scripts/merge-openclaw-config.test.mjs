@@ -102,6 +102,7 @@ describe("merge-openclaw-config", () => {
   it("writes, backs up the original, and leaves main, plugins and the token untouched", () => {
     const dir = workspace();
     const configPath = writeConfig(dir);
+    const beforeText = readFileSync(configPath, "utf8");
     const original = readJson5(configPath);
 
     const { code, stdout } = run(["--config", configPath, "--no-validate", "--no-sync-workspace", "--workspace", path.join(dir, "ws")]);
@@ -109,7 +110,8 @@ describe("merge-openclaw-config", () => {
 
     const backups = readdirSync(dir).filter((name) => name.includes(".bak-clinic-"));
     assert.equal(backups.length, 1, "exactly one timestamped backup");
-    assert.equal(readFileSync(path.join(dir, backups[0]), "utf8"), JSON5.stringify(original, null, 2) + (readFileSync(path.join(dir, backups[0]), "utf8").endsWith("\n") ? "\n" : ""));
+    // The backup must be the original byte for byte, or it is not a restore point.
+    assert.equal(readFileSync(path.join(dir, backups[0]), "utf8"), beforeText);
 
     const after = readJson5(configPath);
     assert.deepEqual(after.agents.entries.main, original.agents.entries.main);
@@ -159,6 +161,11 @@ describe("merge-openclaw-config", () => {
   it("keeps values the fragment does not own, and says so", () => {
     const dir = workspace();
     const configPath = writeConfig(dir);
+    // Merge the real fragment first, so both the kept-conflict branch and the
+    // owned-path-update branch are exercised against an already-merged config.
+    const first = run(["--config", configPath, "--no-validate", "--no-sync-workspace", "--workspace", path.join(dir, "ws")]);
+    assert.equal(first.code, 0, first.stdout);
+
     const fragment = path.join(dir, "conflict.json5");
     writeFileSync(
       fragment,
