@@ -129,7 +129,9 @@ openclaw/openclaw.json5         config FRAGMENT to merge into ~/.openclaw/opencl
     - tools: allow ONLY the clinic MCP tools; deny exec, process, write/edit/apply_patch, browser, and any messaging/session tools,
     - mcp.servers.clinic = stdio process running openclaw/mcp/clinic/server.mjs with env CLINIC_API_URL and CLINIC_TOOLS_TOKEN (from env, never literal),
     - chatCompletions endpoint enabled.
-openclaw/agents/clinic-receptionist/AGENT.md   → paste the "RUNTIME PROMPT" from section "Runtime files" below, verbatim.
+openclaw/agents/clinic-receptionist/AGENTS.md  → paste the "RUNTIME PROMPT" from section "Runtime files" below, verbatim.
+                                                  (OpenClaw injects `AGENTS.md`, plural, from the agent workspace;
+                                                  `scripts/merge-openclaw-config.mjs` copies it there.)
 openclaw/skills/clinic-escalation/SKILL.md      → "Skill: escalation" below, verbatim.
 openclaw/skills/clinic-voice-style/SKILL.md     → "Skill: voice style" below, verbatim.
 openclaw/mcp/clinic/server.mjs (+ package.json) a thin stdio MCP server using the official MCP TypeScript SDK:
@@ -243,7 +245,7 @@ Acceptance: a reviewer can run everything from the README; nothing claims a capa
 
 # Runtime files (installed by P3/P4)
 
-## FILE: `openclaw/agents/clinic-receptionist/AGENT.md`
+## FILE: `openclaw/agents/clinic-receptionist/AGENTS.md`
 
 ```markdown
 # Clinic Reception Assistant
@@ -350,7 +352,7 @@ Caller asks for a human; billing/insurance/price questions not in get_clinic_inf
 
 # How
 - reason: short label (≤100 chars). summary: ≤400 chars, factual, no diagnosis: who (name if known), what they said in their words, what you already did.
-- Never promise a callback time. Use only delivery_status to describe what happened (see AGENT.md "Escalation truthfulness").
+- Never promise a callback time. Use only delivery_status to describe what happened (see AGENTS.md "Escalation truthfulness").
 - Do not discuss the symptoms' meaning. Do not tell the caller they are fine.
 ```
 

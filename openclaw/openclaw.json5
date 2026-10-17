@@ -1,107 +1,177 @@
+// Config FRAGMENT for the clinic receptionist agent.
+//
+// This is not a complete config. `scripts/merge-openclaw-config.mjs` deep-merges
+// it into ~/.openclaw/openclaw.json and never overwrites keys it does not own.
+//
+// Every key below was confirmed against the INSTALLED OpenClaw (2026.10.4,
+// commit 383c124) on 2026-10-17 from three sources -- not from memory:
+//   * `openclaw config schema`      (the JSON schema, 2.4 MB)
+//   * the docs shipped inside the package: docs/tools/mcp.md,
+//     docs/gateway/config-tools/tool-policy.md, docs/tools/multi-agent-sandbox-tools.md,
+//     docs/gateway/config-agents/{entries-and-multi-agent,models,workspace-and-bootstrap}.md,
+//     docs/gateway/config-secrets-env.md, docs/tools/{thinking,skills-config}.md,
+//     docs/providers/nvidia.md, docs/concepts/agent.md
+//   * `openclaw models list --refresh` and `openclaw config validate`
+// See openclaw/README.md for the per-key evidence table.
+//
+// `__REPO_ROOT__` is substituted by the merge script with this checkout's
+// absolute path. Token VALUES never appear here: the MCP server reads them from
+// the gateway process environment via `${VAR}` substitution.
+
 {
-  // Config fragment to merge into ~/.openclaw/openclaw.json
-  //
-  // Key names checked against docs.openclaw.ai on 2026-10-16:
-  //   providers/nvidia, concepts/model-failover, gateway/config-agents/models,
-  //   and the per-agent "agents.entries" page (openclaw 2026.9.4 docs).
-  // Previously this file used `agents.list[{ id, model, thinking: { effort } }]`,
-  // which those pages do not describe: per-agent overrides live under
-  // `agents.entries` keyed by the agent id, and the per-agent thinking key is
-  // `thinkingDefault`. That correction is what makes the model ref below reach
-  // the clinic agent. STILL UNVERIFIED against your installed version: run
-  // `openclaw config schema` (or `openclaw doctor`) after merging and confirm
-  // the agent line with `openclaw agents list`.
-  //
-  // NVIDIA: NVIDIA_API_KEY belongs to the GATEWAY environment only
-  // (~/.openclaw/.env, or the shell that runs the gateway). It is never an app
-  // variable and never goes in the console's .env.
-  gateway: {
-    http: {
-      endpoints: {
-        chatCompletions: { enabled: true }
-      }
-    }
-  },
-  models: {
-    providers: {
-      // Nemotron is served over NVIDIA's OpenAI-compatible API. The provider
-      // auto-enables when NVIDIA_API_KEY is present; the block is declared
-      // explicitly so the baseUrl is visible to a reviewer.
-      nvidia: {
-        baseUrl: "https://integrate.api.nvidia.com/v1",
-        api: "openai-completions"
-      }
-    }
-  },
-  mcp: {
-    servers: {
-      clinic: {
-        transport: "stdio",
-        command: "node",
-        args: ["/ABSOLUTE/PATH/TO/repo/openclaw/mcp/clinic/server.mjs"],
-        env: {
-          CLINIC_API_URL: "${CLINIC_API_URL}",
-          CLINIC_TOOLS_TOKEN: "${CLINIC_TOOLS_TOKEN}"
-        }
-      }
-    }
-  },
   agents: {
-    defaults: {
-      models: {
-        // Thinking off is required for voice latency: without it Nemotron's chat
-        // template emits reasoning before the visible answer. A per-model
-        // `params` entry is the documented place for provider-specific fields
-        // (temperature/maxTokens live there too, but stay at their defaults:
-        // the latency win here is streaming, not sampling).
-        "nvidia/nvidia/nemotron-3-super-120b-a12b": {
-          params: { chat_template_kwargs: { enable_thinking: false } }
-        }
-      }
-    },
+    // REQUIRED for this fragment, not optional decoration. Adding a second agent
+    // entry makes the roster multi-agent, and the schema rejects a multi-agent
+    // roster without this marker:
+    //   "multi-agent rosters require agents.ownership=\"explicit\" or one legacy
+    //    default=true marker; add agents.ownership=\"explicit\" or run openclaw doctor"
+    // (`openclaw config validate` on a 2-entry config, 2026.10.4)
+    //
+    // Consequence to expect: ambient surfaces (channels, heartbeat, system-agent
+    // consults, Talk, cron, bare CLI) must now resolve a surface-specific owner or
+    // fail closed. The console is unaffected -- it names the agent in the model
+    // string (`openclaw/clinic-receptionist`).
+    ownership: "explicit",
+
     entries: {
       "clinic-receptionist": {
-        // A native agent primary is STRICT: fallbacks apply only when the agent
-        // supplies its own non-empty list. Gemini 3.8 Flash is therefore the
-        // failover, used only if NVIDIA errors or rate-limits (429).
+        name: "Clinic receptionist",
+        description:
+          "Voice receptionist for a two-branch dental clinic. Books, reschedules and cancels through clinic MCP tools only; no shell, filesystem, browser or messaging tools.",
+
+        // The workspace is where OpenClaw reads the bootstrap files it injects
+        // into the system prompt, and where `<workspace>/skills` is scanned at the
+        // highest precedence (docs/concepts/agent.md, "Skills"). It deliberately
+        // lives outside the repo so a gateway run cannot add runtime state to the
+        // working tree; the merge script copies AGENTS.md and the two skills from
+        // the repo into it.
+        //
+        // The instructions file MUST be `AGENTS.md` (plural). This repo used to
+        // ship `AGENT.md`, which OpenClaw never reads -- it would have injected a
+        // "missing file" marker instead of the prompt.
+        workspace: "~/.openclaw/workspace-clinic",
+        // Per-agent state: SQLite sessions and auth. Default is
+        // ~/.openclaw/agents/<agentId>/agent; written out so it is reviewable.
+        agentDir: "~/.openclaw/agents/clinic-receptionist/agent",
+
+        // Object form is required to opt into failover: a bare string, or an
+        // object with only `primary`, is STRICT and never falls back.
         model: {
           primary: "nvidia/nvidia/nemotron-3-super-120b-a12b",
-          fallbacks: ["google/gemini-3.8-flash"]
+          fallbacks: ["google/gemini-3.8-flash"],
         },
-        workspace: "~/.openclaw/workspaces/clinic-receptionist",
+
+        // Level 3 of the thinking resolution order (docs/tools/thinking.md):
+        // inline directive > session > this > per-agent model params > shared
+        // model params > agents.defaults. "off" is in the schema enum.
         thinkingDefault: "off",
+
+        // Per-agent, per-model request params. Scoped to this agent so the `main`
+        // agent's Nemotron behaviour is untouched.
+        //   params.thinking      -- documented model-level default.
+        //   params.chat_template_kwargs -- documented for NVIDIA/completions:
+        //     "merged into top-level api: "openai-completions" request bodies"
+        //     (docs/gateway/config-agents/models.md). Without it Nemotron emits
+        //     template reasoning before the visible answer, which the voice
+        //     console would read aloud as latency.
+        models: {
+          "nvidia/nvidia/nemotron-3-super-120b-a12b": {
+            params: {
+              thinking: "off",
+              chat_template_kwargs: { enable_thinking: false },
+            },
+          },
+        },
+
+        // Final skill set for this agent. An explicit list REPLACES inherited
+        // defaults rather than merging (docs/tools/skills-config.md).
+        skills: ["clinic-escalation", "clinic-voice-style"],
+
         tools: {
+          // MCP tools are named `<safe-server>__<safe-tool>` -- `clinic__check_availability`,
+          // not `mcp.clinic.check_availability` (docs/tools/multi-agent-sandbox-tools.md,
+          // "Configured MCP tools use the same policy surface"). `clinic` needs no
+          // sanitising, so the prefix is exactly `clinic__`.
+          //
+          // An agent-level allowlist INTERSECTS every earlier layer, so this list
+          // restricts the global `tools.profile: "full"` down to these 13 tools.
+          // Listed one by one rather than `clinic__*` on purpose: a tool added to
+          // the MCP server later stays unreachable until someone adds it here.
           allow: [
-            "mcp.clinic.get_clinic_info",
-            "mcp.clinic.select_branch",
-            "mcp.clinic.find_doctor",
-            "mcp.clinic.identify_patient",
-            "mcp.clinic.check_availability",
-            "mcp.clinic.hold_slot",
-            "mcp.clinic.request_approval",
-            "mcp.clinic.confirm_booking",
-            "mcp.clinic.reschedule_appointment",
-            "mcp.clinic.cancel_appointment",
-            "mcp.clinic.list_my_appointments",
-            "mcp.clinic.add_note",
-            "mcp.clinic.escalate_to_human"
+            "clinic__get_clinic_info",
+            "clinic__select_branch",
+            "clinic__find_doctor",
+            "clinic__identify_patient",
+            "clinic__check_availability",
+            "clinic__hold_slot",
+            "clinic__request_approval",
+            "clinic__confirm_booking",
+            "clinic__reschedule_appointment",
+            "clinic__cancel_appointment",
+            "clinic__list_my_appointments",
+            "clinic__add_note",
+            "clinic__escalate_to_human",
           ],
+          // Defence in depth: deny wins over allow, and every layer intersects.
+          // Kept explicit so widening `allow` by accident still leaves these shut.
+          //
+          // Deliberately ABSENT: `group:plugins`. Configured MCP servers are
+          // plugin-owned under the `bundle-mcp` plugin id, so denying that group
+          // would also deny the clinic tools themselves.
           deny: [
+            "group:runtime", // exec, process, code_execution
+            "group:fs", // read, write, edit, apply_patch
+            "group:web", // web_search, x_search, web_fetch
+            "group:sessions", // sessions*, conversations*, sessions_spawn, subagents
+            "group:ui", // browser, screen, terminal, portal, canvas, dashboard
+            "group:automation", // automations/cron, gateway, plugins, openclaw
+            "group:messaging", // message
+            "group:nodes", // nodes, computer
+            "group:agents", // agents_list, goals, progress_card, ask_user, skill_workshop
+            "group:media", // view_image, image/music/video_generate, tts, pdf
+            "group:memory", // memory_search, memory_get
+            "group:openclaw", // every built-in above except the fs/runtime/canvas tools
+            // Exact ids, for readability when reading this file alone.
             "exec",
             "process",
             "write",
             "edit",
             "apply_patch",
             "browser",
-            "session.*",
-            "messaging.*"
-          ]
+            "canvas",
+            "message",
+            "gateway",
+            "plugins",
+            "transcripts",
+          ],
         },
-        skills: ["clinic-escalation", "clinic-voice-style"]
-      }
-    }
+      },
+    },
   },
-  skills: {
-    directory: ["/ABSOLUTE/PATH/TO/repo/openclaw/skills"]
-  }
+
+  mcp: {
+    servers: {
+      clinic: {
+        enabled: true,
+        // transport: "stdio" requires a non-empty `command` (docs/tools/mcp.md).
+        transport: "stdio",
+        command: "node",
+        args: ["__REPO_ROOT__/openclaw/mcp/clinic/server.mjs"],
+        // The server imports @modelcontextprotocol/sdk from its own node_modules;
+        // resolving from its directory keeps that working regardless of the
+        // gateway's cwd.
+        cwd: "__REPO_ROOT__/openclaw/mcp/clinic",
+        // `mcp.servers.*.env` only accepts string/number/boolean, so a SecretRef
+        // object is NOT valid here. `${VAR}` substitution is the supported
+        // mechanism and is documented with an MCP env example
+        // (docs/gateway/config-secrets-env.md, "Default values"). Only uppercase
+        // names match, a missing var stays visibly unresolved and warns, and the
+        // values come from the gateway process environment -- never this file.
+        env: {
+          CLINIC_API_URL: "${CLINIC_API_URL}",
+          CLINIC_TOOLS_TOKEN: "${CLINIC_TOOLS_TOKEN}",
+        },
+      },
+    },
+  },
 }

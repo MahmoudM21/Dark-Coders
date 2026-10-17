@@ -18,5 +18,5 @@ Caller asks for a human; billing/insurance/price questions not in get_clinic_inf
 
 # How
 - reason: short label (≤100 chars). summary: ≤400 chars, factual, no diagnosis: who (name if known), what they said in their words, what you already did.
-- Never promise a callback time. Use only delivery_status to describe what happened (see AGENT.md "Escalation truthfulness").
+- Never promise a callback time. Use only delivery_status to describe what happened (see AGENTS.md "Escalation truthfulness").
 - Do not discuss the symptoms' meaning. Do not tell the caller they are fine.
