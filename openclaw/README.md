@@ -107,6 +107,27 @@ is unaffected because it names the agent explicitly in the model string
 (`openclaw/clinic-receptionist`). If you route a channel to an agent later, add a
 `bindings` entry; the sole-agent fallback no longer applies.
 
+### Bridge session modes
+
+The bridge sends `x-openclaw-agent-id: clinic-receptionist` by default and does
+not send a session key. This is intentionally stateless at the Gateway: the
+bridge already sends the recent console turns in `messages`, so the Gateway
+does not need to load a stored transcript and risk duplicating that context.
+
+To use Gateway-owned session continuity instead, set `CLINIC_GATEWAY_SESSION=agent-scoped`
+in the app environment. The bridge then sends
+`x-openclaw-session-key: agent:clinic-receptionist:clinic-<consoleSessionId>`.
+Do not use the old unscoped `clinic:<consoleSessionId>` form.
+
+The installed OpenClaw 2026.10.4 docs (`docs/gateway/openai-http-api.md`) say
+that Chat Completions is stateless per request unless `user` or
+`x-openclaw-session-key` is supplied. The installed endpoint implementation
+also converts every supplied `messages` entry into the current agent prompt,
+while a session key separately selects the Gateway's stored session. That
+means sending the full bridge history in agent-scoped mode can duplicate
+context; the bridge's `OPENCLAW_GATEWAY_MERGES_HISTORY=1` switch sends only the
+latest user turn for that mode.
+
 ---
 
 ## 4) Merge the fragment (PowerShell)

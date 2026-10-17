@@ -3,6 +3,8 @@
 //
 //   npm run clinic:latency
 //   CLINIC_LATENCY_LABEL=nemotron npm run clinic:latency     # label this run
+//   CLINIC_LATENCY_LABEL=stateless npm run clinic:latency
+//   CLINIC_LATENCY_LABEL=agent-scoped CLINIC_GATEWAY_SESSION=agent-scoped npm run clinic:latency
 //
 // It drives four voice-like turns (what a caller says, not tool names) through the
 // REAL /api/agent bridge and prints, per turn:
@@ -62,6 +64,7 @@ function refuse(reason, howTo) {
 
 const BASE = (env("CLINIC_API_URL") || "http://localhost:3000").replace(/\/$/, "");
 const LABEL = env("CLINIC_LATENCY_LABEL") || "current agent configuration";
+const SESSION_MODE = env("CLINIC_GATEWAY_SESSION") || "stateless";
 
 /** One turn, phrased the way an Egyptian-Arabic caller would say it out loud. */
 const SCRIPT = [
@@ -165,6 +168,7 @@ async function main() {
   loadEnvFile();
   console.log("Clinic latency probe — label: " + LABEL);
   console.log("Bridge: " + BASE + "/api/agent\n");
+  console.log("Gateway session mode: " + SESSION_MODE);
 
   const url = env("SUPABASE_URL");
   const key = env("SUPABASE_SERVICE_ROLE_KEY");

@@ -49,7 +49,7 @@ flowchart LR
     BS["Booking Service\n/api/clinic/tools"]
     ES["Escalation delivery\n(webhook / email / sms)"]
   end
-  BR -- "/v1/chat/completions\nmodel=openclaw/clinic-receptionist\nx-openclaw-session-key" --> GW
+  BR -- "/v1/chat/completions\nmodel=openclaw/clinic-receptionist\nx-openclaw-agent-id" --> GW
   subgraph OC["OpenClaw Gateway"]
     GW[Receptionist agent\nNemotron 3 Super] -- stdio MCP --> MCP[clinic MCP proxy]
   end

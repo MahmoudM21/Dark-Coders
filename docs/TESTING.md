@@ -428,3 +428,33 @@ afterwards.
 | Date | Label | First turn: reasoning / answer (ms) | Available: reasoning / answer (ms) | Booking: reasoning / answer (ms) | Tool calls |
 |---|---|---|---|---|---|
 | | | | | | |
+
+### 9.6 Gateway session-mode A/B
+
+The installed OpenClaw 2026.10.4 docs and endpoint implementation show that
+`messages` are converted into the current prompt, while
+`x-openclaw-session-key` selects a stored Gateway session. The bridge therefore
+defaults to stateless requests (`x-openclaw-agent-id` only), with
+`CLINIC_GATEWAY_SESSION=agent-scoped` as an opt-in. When measuring, set the
+same mode in the app environment and in the probe label:
+
+```powershell
+# App environment, then restart the app:
+$env:CLINIC_GATEWAY_SESSION=""
+$env:CLINIC_LATENCY_LABEL="stateless"; npm run clinic:latency
+
+# Repeat after restarting the app with:
+$env:CLINIC_GATEWAY_SESSION="agent-scoped"
+$env:CLINIC_LATENCY_LABEL="agent-scoped"; npm run clinic:latency
+```
+
+Measured on 2026-10-17 against the live gateway:
+
+| Mode | Answer-ready ms (four turns) | Result |
+|---|---:|---|
+| Stateless (default) | 12,407 / 4,649 / 15,423 / 11,404 | Correct history and booking flow; final booking turn reached a truthful `bridge_error (INTERNAL)` from the backend. |
+| Agent-scoped | 6,795 / 9,801 / 5,350 / 4,551 | Faster in this run (average 6,624 ms vs 10,971 ms), but asked for a phone number already included in the supplied history and made no tool call on the booking turn. |
+
+The result supports stateless mode as the behaviorally correct default. The
+timings are one live four-turn sample, not a performance benchmark; reset demo
+data with `supabase/reset_demo.sql` before repeating it.

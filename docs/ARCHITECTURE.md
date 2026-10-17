@@ -22,7 +22,7 @@ Database: **PostgreSQL** (the repo already ships Supabase = Postgres, so the sch
 | Supabase is optional (`user_state` only), server client `supabaseAdmin` (service role). No other DB. | `supabase/`, `client.server.ts` | Add one migration; call SQL functions via `supabaseAdmin.rpc`. |
 | Tests: `node --test` on an explicit file list; tests excluded from `tsc`; strict TS incl. `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`. | `package.json`, `tsconfig.json` | New tests must be appended to the `test` script. |
 
-OpenClaw facts (from docs.openclaw.ai, verify against your installed version): chat-completions endpoint must be enabled (`gateway.http.endpoints.chatCompletions.enabled`); `model: "openclaw/<agentId>"` selects an agent; `x-openclaw-session-key` / OpenAI `user` controls session; `x-openclaw-model` can override the backend model; config lives in `~/.openclaw/openclaw.json`; custom tools come from **MCP servers** (`mcp.servers`) or plugins; skills are `SKILL.md` files injected into the system prompt; `tools.allow/deny` (deny wins).
+OpenClaw facts (verified in the installed 2026.10.4 docs): chat-completions is stateless per request unless `user` or `x-openclaw-session-key` is supplied; `model: "openclaw/<agentId>"` selects an agent; `x-openclaw-agent-id` is the explicit compatibility override; `x-openclaw-session-key` controls an explicitly routed stored session; `x-openclaw-model` can override the backend model; config lives in `~/.openclaw/openclaw.json`; custom tools come from **MCP servers** (`mcp.servers`) or plugins; skills are `SKILL.md` files injected into the system prompt; `tools.allow/deny` (deny wins). The clinic bridge defaults to the stateless mode because it sends recent `messages` history itself. Set `CLINIC_GATEWAY_SESSION=agent-scoped` to opt into `agent:<agentId>:clinic-<consoleSessionId>`.
 
 ---
 
@@ -52,7 +52,7 @@ flowchart LR
     BS["Booking Service\n/api/clinic/tools"]
     ES["Escalation delivery\n(webhook / email / sms)"]
   end
-  BR -- "/v1/chat/completions\nmodel=openclaw/clinic-receptionist\nx-openclaw-session-key" --> GW
+  BR -- "/v1/chat/completions\nmodel=openclaw/clinic-receptionist\nx-openclaw-agent-id" --> GW
   subgraph OC["OpenClaw Gateway"]
     GW[Receptionist agent\nNemotron 3 Super] -- stdio MCP --> MCP[clinic MCP proxy]
   end

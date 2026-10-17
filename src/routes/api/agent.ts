@@ -385,6 +385,13 @@ export const Route = createFileRoute("/api/agent")({
           ...contextMessages,
           ...toModelInput(selectedTurns, context),
         ];
+        const agentId = model.slice("openclaw/".length);
+        const gatewayHeaders: Record<string, string> = {
+          "x-openclaw-agent-id": agentId,
+        };
+        if (process.env["CLINIC_GATEWAY_SESSION"] === "agent-scoped") {
+          gatewayHeaders["x-openclaw-session-key"] = `agent:${agentId}:clinic-${clinicSessionId}`;
+        }
 
         const stream = new ReadableStream<Uint8Array>({
           start: async (controller) => {
@@ -394,7 +401,7 @@ export const Route = createFileRoute("/api/agent")({
             try {
               const callModel = (input: Record<string, unknown>[]) =>
                 streamResponses(request, input, {}, model, {
-                  headers: { "x-openclaw-session-key": `clinic:${clinicSessionId}` },
+                  headers: gatewayHeaders,
                   appendJsonInstruction: true,
                   // The clinic path needs to see a real 429 from the upstream, including
                   // the wait it asked for. No other caller sets this, so nothing else
