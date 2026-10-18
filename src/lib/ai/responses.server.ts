@@ -110,7 +110,15 @@ async function streamChatAsResponses(request: Request, input: Record<string, unk
           try {
             const parsed = JSON.parse(data) as {
               choices?: { delta?: { content?: string; reasoning_content?: string } }[];
+              error?: unknown;
             };
+            // The Gateway streams provider failures inside a 200 SSE body (an exhausted
+            // quota, for example). Dropping them left the caller with an empty answer and
+            // an "Unexpected end of JSON input"; emit them so the bridge can tell the truth.
+            if (parsed.error) {
+              ctrl.enqueue(enc.encode(`data: ${JSON.stringify({ type: "response.error", error: parsed.error })}\n\n`));
+              continue;
+            }
             const reasoning = parsed.choices?.[0]?.delta?.reasoning_content;
             if (reasoning) {
               ctrl.enqueue(enc.encode(`data: ${JSON.stringify({ type: "response.reasoning_summary_text.delta", delta: reasoning })}\n\n`));

@@ -90,7 +90,7 @@ function parseSseLine(line: string) {
   const payload = line.slice(5).trim();
   if (!payload || payload === "[DONE]") return null;
   try {
-    return JSON.parse(payload) as { type?: string; delta?: string; text?: string };
+    return JSON.parse(payload) as { type?: string; delta?: string; text?: string; error?: unknown };
   } catch {
     return null;
   }
@@ -109,6 +109,7 @@ async function collectModelOutput(
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";
   let output = "";
+  let upstreamError: string | null = null;
   let sawEvent = false;
   while (true) {
     const next = await reader.read();
@@ -123,12 +124,26 @@ async function collectModelOutput(
         sawEvent = true;
         onFirstEvent?.();
       }
+      if (event.type === "response.error") {
+        const raw = event.error;
+        upstreamError =
+          typeof raw === "string"
+            ? raw
+            : raw && typeof raw === "object" && "message" in raw && typeof (raw as { message: unknown }).message === "string"
+              ? (raw as { message: string }).message
+              : JSON.stringify(raw);
+        continue;
+      }
       if (event.type === "response.reasoning_summary_text.delta" && event.delta) onReasoning(event.delta);
       if (event.type === "response.output_text.delta" && event.delta) output += event.delta;
       if (event.type === "response.output_text.done" && typeof event.text === "string") output = event.text;
     }
   }
-  return output.trim();
+  const trimmed = output.trim();
+  // An upstream failure with no answer is not an empty screen: say what happened so the
+  // caller gets the busy screen for a 429 instead of a generic validation failure.
+  if (!trimmed && upstreamError) throw new Error(`MODEL_STREAM_ERROR:${upstreamError}`);
+  return trimmed;
 }
 
 function parseApprovalIntent(text: string) {
@@ -682,6 +697,23 @@ export const Route = createFileRoute("/api/agent")({
               });
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
+              // A provider failure can arrive inside a 200 SSE stream (OpenClaw does this
+              // for an exhausted quota). If it is a rate limit, the caller hears the
+              // busy screen — the same one the non-streaming 429 path produces.
+              const rateLimited =
+                /MODEL_STREAM_ERROR/.test(message) && /429|RESOURCE_EXHAUSTED|rate[ _-]?limit|quota/i.test(message);
+              if (rateLimited) {
+                await auditBridgeEvent({
+                  session_id: clinicSessionId,
+                  actor: "bridge",
+                  event: "upstream_429",
+                  outcome: "error",
+                  error_code: "RATE_LIMITED",
+                  input: { source: "stream", message: message.slice(0, 300) },
+                });
+                send({ type: "response.output_text.done", text: JSON.stringify(busyScreen(locale)) });
+                return;
+              }
               send({
                 type: "response.output_text.done",
                 text: JSON.stringify({

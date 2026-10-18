@@ -161,6 +161,10 @@ async function runTurn(modelId, turns, sessionId) {
 function drift(turn, screen, history) {
   const issues = [];
   const text = screen?.text ?? "";
+  // The bridge's own error and busy screens are deliberately in the session locale; judging
+  // their language would report a drift the model never produced.
+  const bridgeSays = /(تعذر إكمال هذه الخطوة|الخدمة مشغولة|That step could not be completed|The service is busy)/.test(text);
+  if (bridgeSays) return issues;
   const expectsArabic = turn.lang === "ar";
   const hasArabic = ARABIC.test(text);
   if (expectsArabic && !hasArabic) issues.push("replied in English to an Arabic turn");
@@ -193,6 +197,15 @@ async function runModel(model) {
     }
     const { screen, issues } = checkScreen(result.raw);
     const turnIssues = [...issues, ...drift(turn, screen, turns)];
+    // The bridge's own fallback screen is valid JSON but it means no model answer was used:
+    // counting it as a contract pass would hide a failed turn.
+    if (screen?.text === "تعذر إكمال هذه الخطوة. آخر حالة مؤكدة لم تتغير." || screen?.text === "That step could not be completed. Your last confirmed state is unchanged.") {
+      turnIssues.push("bridge error screen — no model answer");
+    }
+    if (!result.timing) turnIssues.push("no bridge.timing event (error path)");
+    if (screen?.text === "الخدمة مشغولة دلوقتي، جرّب بعد ثواني." || screen?.text === "The service is busy right now. Please try again in a few seconds.") {
+      turnIssues.push("provider busy screen (429) — no answer");
+    }
     if (result.timing?.repair_used) turnIssues.push("bridge repaired the screen");
     const tools = typeof result.timing?.tool_calls === "number" ? result.timing.tool_calls : null;
     rows.push({
@@ -201,7 +214,7 @@ async function runModel(model) {
       tools,
       issues: turnIssues,
       text: screen?.text ?? "",
-      valid: issues.length === 0,
+      valid: turnIssues.length === 0,
       timing: result.timing,
     });
     console.log(
