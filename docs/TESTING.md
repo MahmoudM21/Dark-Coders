@@ -458,3 +458,171 @@ Measured on 2026-10-17 against the live gateway:
 The result supports stateless mode as the behaviorally correct default. The
 timings are one live four-turn sample, not a performance benchmark; reset demo
 data with `supabase/reset_demo.sql` before repeating it.
+
+### 9.7 Speech input: CORS, the same-origin proxy and warm-up
+
+Run the probe first. It is the only way to tell a CORS block from a slow load:
+
+```bash
+npm run clinic:stt-probe
+```
+
+For every combination of `whisper-1` / `ASR_MODEL` and with/without
+`language=ar` it prints the POST status, whether the response carries
+`Access-Control-Allow-Origin`, the body, and the first and second call times. It
+also prints the `OPTIONS` answer, because a service can allow the preflight and
+still omit ACAO on the real response — which is the failure this console hit.
+
+| Observation | Meaning | Action |
+|---|---|---|
+| Status 200, `ACAO (absent)` | The upload worked; the browser blocked the response. | Use **Local via app** (default). |
+| `no HTTP answer` and the port accepts TCP | The container is up but not serving (wedged/starting). | Restart it: `docker ps`, then `docker start <speaches>` (or your compose service). |
+| `ASR_TIMEOUT` in the console | `ASR_TIMEOUT_MS` elapsed (default 300000). | `npm run clinic:warmup`, then retry. |
+
+Then, once the service answers, prove the app path end to end:
+
+1. **Settings → Voice & Agents**: Speech recognition = **Local via app** (the
+default), Recognition language = `ar`.
+2. Hold the mic and say `أهلاً` — the transcript appears in the “heard” line and
+the turn is sent.
+3. Stay silent for a turn — the console must say `ما سمعتش كلام واضح، جرّب تاني`
+and **no** `/api/agent` request may appear in the Network panel. The empty
+transcript is never sent as an empty user turn.
+4. Stop the app and try a typed turn: the error must name `/api/agent` and the
+likely causes, not just “Failed to fetch”.
+
+`npm run clinic:warmup` does the two cold starts in one command (tiny WAV to the
+ASR, then one `hi` turn through the bridge) and prints both times.
+
+### 9.8 Preflight: what PASS, WARN and FAIL mean now
+
+```bash
+npm run clinic:preflight
+node scripts/preflight.mjs --warmup
+```
+
+The agent check sends `x-openclaw-agent-id` (no session key), waits
+`CLINIC_PREFLIGHT_TIMEOUT_MS` (default 120000), and judges the reply as screen
+JSON:
+
+| Result | Meaning |
+|---|---|
+| `PASS` | Valid screen JSON in ≤ 15 s; the message prints the elapsed ms and HTTP status. |
+| `WARN` | Valid screen JSON but slower than 15 s; the time is printed. This is the normal result on a cold or busy free endpoint — not a failure. |
+| `FAIL` | Not screen JSON, or a real HTTP status/error code, printed with the elapsed ms and the first 600 characters of the body. |
+| `timed out after N ms` | No HTTP answer within the timeout; the message says which variable controls it. |
+
+`--warmup` adds two more timed turns (reported as `agent warmup 2/3`, `3/3`),
+which is the state a demo should start from.
+
+Measured 2026-10-18: 20,493 / 22,938 / 32,073 ms for the three turns — all valid
+screens, all WARN by the 15 s rule.
+
+### 9.9 One turn, stage by stage
+
+Every clinic turn now sends a `bridge.timing` event and writes one
+`audit_events` row (`event = 'turn_timing'`, numbers only). In the console open a
+message's steps and read **Bridge timing**:
+
+```
+session 1.4 s · context 1.8 s · first event 22.5 s · gateway 24.1 s · total 26.6 s · 0 tool calls
+```
+
+`session_open_ms` is `clinic_open_session`; `context_ms` is the availability
+prefetch plus `clinic_get_info`; `gateway_first_event_ms` is the first SSE event
+from the model; `gateway_ms` is the whole model call; `validation_ms` includes a
+repair if one ran; `tool_calls` is the number of `tool_call` audit rows for this
+session inside the turn window — not a model claim.
+
+```sql
+select at, input from audit_events
+where event = 'turn_timing' order by at desc limit 5;
+```
+
+`npm run clinic:latency` prints the same breakdown per turn plus median and p90
+over `CLINIC_LATENCY_RUNS` passes (`CLINIC_LATENCY_RUNS=5 npm run clinic:latency`).
+
+### 9.10 Model conformance A/B (Nemotron vs the Gemini fallback)
+
+```bash
+CLINIC_AB_MODEL_OVERRIDE=1 npm run dev     # terminal 1 (restart it with this variable)
+npm run clinic:model-ab                    # terminal 2 — both legs
+CLINIC_AB_ONLY=nemotron npm run clinic:model-ab
+```
+
+The bridge accepts `x-clinic-backend-model` only while
+`CLINIC_AB_MODEL_OVERRIDE=1`, and only for
+`nvidia/nvidia/nemotron-3-super-120b-a12b` and `google/gemini-3.8-flash`. The
+header becomes the Gateway's `x-openclaw-model` for that request; the agent's own
+configuration and the default model are untouched. The script replays one
+realistic conversation (booking request, branch, name, phone, time, choose, an
+English turn, urgent pain) with the whole history, exactly as the console sends
+it. Result: `docs/model-ab-results.json`.
+
+**Tool names come from `audit_events`, never from the reply**, so the report can
+show a turn where the model said `تم الحجز!` with no `confirm_booking` row. Each
+turn's rows are attributed by turn window, and a turn is judged on four things:
+the screen contract (kind, length, ≤4 choices, no emoji/markdown), the turn's
+language, claims checked against successes, and waste (identical repeated calls).
+
+A turn where the provider refused to serve us is **BLOCKED**, not a contract
+failure: no model answer existed to judge, and counting it either way would be a
+fake result. The reason is read from the bridge's own `upstream_429` /
+`bridge_error` row. Knobs: `CLINIC_AB_BUSY_WAIT_MS` (30,000) and
+`CLINIC_AB_BUSY_RETRIES` (1) replay a provider-busy turn once;
+`CLINIC_AB_ABORT_AFTER_BLOCKED` (2) stops a dead leg; `CLINIC_AB_WARMUP=0` skips
+the uncounted warm-up turn; `CLINIC_AB_TIMEOUT_MS` (180,000) bounds one turn.
+
+**Measured 2026-10-18, live gateway, app on `:8080` — eight Nemotron runs.**
+
+| Run (session) | Contract | Median | p90 | Tool calls |
+|---|---:|---:|---:|---:|
+| `c0612a56` (earlier) | 6/8 clean | 12,985 ms | 59,028 ms | 7 |
+| `2f587324` | 6/7 (1 blocked) | 18,944 ms | 73,552 ms | 6 |
+| `9bc84ff4` | 4/8 | 11,264 ms | 58,878 ms | 6 |
+| `049f9f05` | 4/8 | 14,781 ms | 147,972 ms | 14 |
+| `ccfe781d` | 5/8 | 10,249 ms | 49,345 ms | 6 |
+| `8b98e0e3` | 4/8 | 18,528 ms | 56,762 ms | 9 |
+| `ad6eca81` | 5/8 | 9,680 ms | 180,010 ms | 9 |
+| `e7560737` (last) | 3/8 | 7,995 ms | 20,784 ms | **0** |
+
+Median per run: **8.0–18.9 s**, on a free NVIDIA endpoint with thinking off.
+
+| Model | Turns | Contract | Median | p90 | Tool calls |
+|---|---:|---:|---:|---:|---:|
+| Nemotron 3 Super | 8 × 8 runs | 3–6 of 8 clean, never 8 | 8.0–18.9 s | 20.8–180 s | 0–14 |
+| Gemini 3.8 Flash | 8 × 4 runs | **UNVERIFIED — provider refused** | — | — | — |
+
+Gemini has never produced a single token on this checkout. Every attempt ends in
+`exceeded your current quota` (`429`), then `Provider google is in cooldown`
+(`rate_limit`, later `model_not_found`), then `Auth profile
+"google:setup-…" is temporarily unavailable`. Walked directly against the
+gateway on 2026-10-18 (`/v1/chat/completions`, `model:
+openclaw/clinic-receptionist`, `x-openclaw-model: …`), `google/gemini-3.8-flash`
+answered `429` and the other two ids the key can see (`gemini-2.5-flash`,
+`gemini-2.5-flash-lite`) are `404 no longer available` / `model_not_found` — so
+this is not a missing model name and not the fallback being misconfigured; the
+free-tier quota for the whole project is spent. **Those failures do prove the
+override works**: the error always names `google/gemini-3.8-flash` rather than
+the agent's primary, and `gemini-2.5-flash` reaching Google is how the `404`
+came back. Re-run `npm run clinic:model-ab` once the key has quota — the harness
+will fill the second leg in the same shape.
+
+**Where Nemotron drifts** (all eight runs; a run is one full conversation):
+
+| Drift | How often | Evidence |
+|---|---|---|
+| **The English turn is never answered in English.** | 8/8 runs: Arabic screen 6, prose instead of JSON 2. | `What are your opening hours?` → `عيادة ديمو مفتوحة من الأحد للسبت…`. In `2f587324` and `8b98e0e3` it was not JSON at all: bridge `Unexpected token 'ف'` / `Unexpected token 'I', "I need to "`, so the caller heard the generic failure screen. |
+| **`identify_patient` gets a mutilated name.** | 8 calls across 7/8 runs; every single call so far | `{"phone":"***223","full_name":"مع"}` for a caller who said `اسمي محمد علي`. The patient record is then identified against a fragment. |
+| **Says it booked when nothing was booked.** | 3/8 runs | `تم الحجز! … كود التأكيد: ABC123` / `…: 6f2d4c1b-…` with **0** `confirm_booking` rows; in `ad6eca81` `confirm_booking` ran and returned `APPROVAL_PENDING` while the screen said `تم تأكيد الحجز … رمز التأكيد: CCD557`. |
+| **Never touches a tool at all.** | 1/8 runs (`e7560737`) | 0 `tool_call` rows for the whole conversation: no `select_branch`, no `hold_slot`, no booking, while every screen stayed plausible. |
+| **The urgent turn does not escalate.** | 4/7 runs with no `escalate_to_human`; 3/7 escalated (twice). | `عندي ألم شديد` → `اتصل بالإسعاف فورًا على 123. حاولت أبلغ فريق العيادة بس معرفتش أتأكد إنهم وصلهم` with no escalation row. |
+| **Repeats one tool with identical arguments.** | 3/8 runs | `add_note` 3× identical, `list_my_appointments` 2× identical, `check_availability` 3× identical — inside one turn (the worst turn cost 147.9 s). |
+| **Leaks non-Arabic text into Arabic speech.** | 3/8 runs | `هيواصل معاك afterward`, `…للموافقة على لوحة التحكم.branches`, `السبت بعد 5 مساءً؟ أمinate؟`. |
+| **A repair that the repair cannot fix.** | 4/8 runs | `repair_attempt (VALIDATION_ERROR)` then the *repaired* output also failed, so the caller heard `تعذر إكمال هذه الخطوة…` after real work had already happened. |
+| **Re-asks for what it already has.** | 3/8 runs | `ممكن أعرف اسم حضرتك الكامل؟` two turns after `اسمي محمد علي`; in `9bc84ff4` it re-asked for the phone in the turn after the phone. |
+| **Offers more than three times in one sentence.** | 2/8 runs | `6 أو 6:30 أو 7 أو 7:30 أو 8`. |
+
+The fabricated confirmation is the drift that matters most: it satisfies the
+screen contract with valid JSON, and only the audit row exposes it. The zero-tool
+run is its twin — nothing was booked and nothing looked wrong.

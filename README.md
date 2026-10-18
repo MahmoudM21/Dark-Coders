@@ -142,10 +142,19 @@ cp .env.example .env               # Supabase, CLINIC_TOOLS_TOKEN, gateway URL
 - `npm run typecheck` — `tsc --noEmit`
 - `npm test` — `node --test`
 - `npm run clinic:openclaw-merge` — merge the OpenClaw config fragment (add `-- --dry-run` first)
-- `npm run clinic:preflight` — pre-demo readiness checks
+- `npm run clinic:preflight` — gateway, agent (one real turn), tools, speech; `-- --warmup` adds two timed turns
+- `npm run clinic:warmup` — loads the ASR model and warms one bridge turn
+- `npm run clinic:stt-probe` — ASR status, CORS headers and cold/warm timings
+- `npm run clinic:latency` — per-turn stage breakdown, median and p90
+- `npm run clinic:model-ab` — Nemotron vs Gemini on one scripted conversation, scored on the screen contract and on the tool calls `audit_events` actually recorded
+- `npm run check:prompts` — the runtime prompt files match `docs/PROMPTS.md` byte for byte
 - `npm run clinic:webhook-echo` — local escalation receiver for testing
 - `npm run clinic:mcp-smoke` — asserts the MCP proxy's 13-tool set over stdio
 - `npm run lint` — ESLint
+
+If a check fails, [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) starts with
+the symptoms this checkout actually produced ("Failed to fetch" with HTTP 200,
+an aborted preflight, a cold start, and a Gemini fallback that is out of quota).
 
 ### Architecture reference
 

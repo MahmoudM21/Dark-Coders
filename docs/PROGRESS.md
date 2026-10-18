@@ -1,15 +1,42 @@
 # Progress — Clinic Reception agent
 
-Branch: `perf/nemotron-latency` (never merged; `main` is untouched by this
-session). This session switched the agent's backend model to NVIDIA Nemotron 3
-Super and cut the perceived latency of a voice turn, without changing the console
-JSON contract or any non-clinic model path.
+Branch: `perf/voice-latency-and-stt` (never merged; `main` is untouched by this
+session). The previous session switched the backend model to NVIDIA Nemotron 3
+Super and cut bridge-side latency. This session fixes the speech-to-text path,
+makes the preflight prove a real turn, instruments every stage of a turn, and
+compares Nemotron with the Gemini fallback on the same scripted conversation.
 
 Read first: `docs/ARCHITECTURE.md` (§8 model, §9 bridge), `docs/PROMPTS.md`
 (CONTEXT BLOCK + "Runtime files"), `docs/TESTING.md` (§9 is this session's
-checks), `README.md`.
+checks), `docs/TROUBLESHOOTING.md`, `README.md`.
 
-## Done (this session)
+## Session 2026-10-18 — STT, preflight, turn timing, model A/B
+
+| Commit | Task | What |
+|---|---|---|
+| `595550f` | 1 | **Preflight proves a real turn.** The agent check sent `max_tokens: 1` and no agent header, so it could never accept a screen, and its 15 s timeout aborted a healthy 40–60 s cold turn with a bare "operation was aborted". It now sends `x-openclaw-agent-id`, waits `CLINIC_PREFLIGHT_TIMEOUT_MS` (default 120 s), reports elapsed ms plus the real status/error code, returns PASS / WARN (>15 s, with the time) / FAIL (with the exact reason), and `--warmup` runs two extra timed turns. |
+| `fc77edc` | 2 | **ASR through the app.** Root cause of "Failed to fetch" with HTTP 200: the POST response from Speaches carries no `Access-Control-Allow-Origin`, so the browser blocks the response. `Local via app` is now the default ASR mode: `/api/asr` receives the multipart upload same-origin and forwards it to `ASR_BASE_URL` with `ASR_MODEL`, `ASR_LANGUAGE` and `ASR_TIMEOUT_MS`. Structured `{code,message,detail}` errors; empty transcripts are not sent as turns; typed-turn failures name the URL and the likely causes. `clinic:stt-probe` reports status, ACAO and cold/warm ms; `clinic:warmup` loads the model and warms one bridge turn; seven fake-ASR tests. |
+| `6384661` | 3–4 | **Turn timing and a model A/B harness.** The bridge measures session open, prefetch, clinic info, first gateway event, gateway total, validation, repair and audit-counted tool calls, sends them as `bridge.timing` (a console step with its time) and stores one `turn_timing` audit row with numbers only. `clinic:latency` prints the breakdown and median/p90 over `CLINIC_LATENCY_RUNS`; `clinic:model-ab` replays one scripted conversation against two backend models through `x-openclaw-model` (whitelisted, off unless `CLINIC_AB_MODEL_OVERRIDE=1`). Also adds the experimental `agent-scoped-delta` history mode (off by default). |
+| (this commit) | 4.4 | **Model conformance A/B, eight runs, and a harness that cannot be fooled.** `clinic:model-ab` now attributes each turn's `audit_events` rows by turn window, reads **tool names and outcomes** (never the reply) and checks claims against *successful* calls, so `تم الحجز!` with a failed or absent `confirm_booking` is a FAIL; it also flags mutilated tool arguments, identical repeated calls, Latin text inside Arabic speech, promises of escalation, emergency advice with no `escalate_to_human`, and provider-refused turns as **BLOCKED** (with the reason from the bridge's own `upstream_429` / `bridge_error` row) instead of counting them as conformance failures. Uncounted warm-up turn, opt-in busy replay, and a leg that stops itself when the provider is dead. Result: **Nemotron 3 of 8 to 6 of 8 turns clean, never 8/8, median 8.0–18.9 s**; the English turn was never once answered in English, `identify_patient` got a fragment of the caller's name in 8 of 8 calls, and 3 runs claimed a booking that nothing confirmed. **Gemini could not be measured at all** — the Google free-tier quota is spent (see §9.10 for the message sequence and the direct-gateway proof that the override itself works). |
+
+Measured on this machine (2026-10-18, live gateway, app on `:8080`):
+
+| Check | Result | Evidence |
+|---|---|---|
+| `npm run typecheck` | **PASS** | 0 errors. |
+| `npm test` | **PASS** | 108 tests, 0 fail (25 suites), including 7 new fake-ASR tests. |
+| `npm run check:prompts` | **PASS** | 3 of 3 byte-identical. |
+| `npm run clinic:preflight` | **PASS** | 7 passed, 0 failed, 5 warnings: the agent turn is valid screen JSON but 20–52 s, so WARN by design. |
+| `preflight --warmup` | **PASS** | Two extra turns: 22,938 ms and 32,073 ms, both valid screens. |
+| Console typed turn | **PASS** | Answer in 27.3 s; steps showed `session 1.4 s · context 1.8 s · first event 22.5 s · gateway 24.1 s · total 26.6 s · 0 tool calls`. |
+| `turn_timing` audit row | **PASS** | Present with the same numbers; tool calls 0. |
+| `npm run clinic:stt-probe` | **UNVERIFIED as a CORS measurement** | Port 8000 accepts TCP but answers no HTTP at all right now (all eight calls timed out, `docker ps` lists no container), so there is no POST response to inspect. The probe printed that rather than guessing. |
+| Think on the wire | **UNVERIFIED** | `openclaw config get` returns `thinkingDefault: off` and `params.thinking: off` + `enable_thinking: false`; no request-body log exists to observe the wire itself. |
+| Model conformance A/B | **see §9.10** | 8 identical turns per model through the real bridge; Nemotron measured 8×, Gemini **UNVERIFIED** (provider quota spent, override proven). |
+
+The next section is the previous session's record and is kept as history.
+
+## Done (previous session)
 
 | Commit | Task | What |
 |---|---|---|
@@ -22,7 +49,7 @@ checks), `README.md`.
 | `b967605` | 7a | **Latency probe.** `scripts/latency-probe.mjs` (`npm run clinic:latency`) drives four voice-like turns through the real `/api/agent` bridge and prints ms-to-first-reasoning, ms-to-answer and the clinic tool calls counted from `audit_events`. |
 | (this commit) | 7b–7d | **Verification and docs.** See the table below. Two defect fixes: the probe counted `audit_events.created_at`, which **does not exist** (the column is `at`) so the tool-call column was always `n/a`; and it printed a table when every turn had been answered by the bridge's error path, i.e. numbers that were not model latency. It now refuses in that case (exit 2, no table) and marks partial failures row by row. The same wrong column name in four copy-pasteable operator queries in `docs/TESTING.md`, `docs/DEMO.md` and `docs/EXTENSIONS.md` was corrected. |
 
-## Verification (2026-10-17, this checkout)
+## Verification (2026-10-17, previous session)
 
 | Check | Result | Evidence |
 |---|---|---|
@@ -50,7 +77,18 @@ checks), `README.md`.
    ```
    Then the A/B curl pair in `openclaw/README.md` §2 — the `x-openclaw-model`
    override and the Gemini failover are both unproven from this checkout.
-2. **Latency, Nemotron vs Gemini.**
+2. **The Gemini leg of the model A/B (blocked today, not failing).** The Google
+   free-tier quota is spent, so the whole second leg is BLOCKED with the reason
+   recorded from the bridge's own audit row. When the key has quota again:
+   ```bash
+   CLINIC_AB_MODEL_OVERRIDE=1 npm run dev        # terminal 1
+   npm run clinic:model-ab                       # terminal 2 — both legs
+   psql "$DATABASE_URL" -f supabase/reset_demo.sql   # needs psql; not installed here
+   ```
+   A leg that is still refused prints BLOCKED with the provider's message and
+   contributes nothing to the contract numbers — that is the intended outcome,
+   not a failure to fix.
+3. **Latency, Nemotron vs Gemini.**
    ```bash
    npm run dev                                   # terminal 1
    CLINIC_LATENCY_LABEL=nemotron npm run clinic:latency
@@ -59,26 +97,30 @@ checks), `README.md`.
    ```
    Paste both tables into `docs/TESTING.md` §9.5. (If your dev server is not on
    port 3000, add `CLINIC_API_URL=http://localhost:<port>`.)
-3. **The "available times" turn needs no tool call** — `docs/TESTING.md` §9.1:
+4. **The "available times" turn needs no tool call** — `docs/TESTING.md` §9.1:
    prove it from `audit_events` (`select at, actor, event, tool, outcome,
    latency_ms from audit_events where session_id = '<id>' order by at`).
-4. **The filler** — `docs/TESTING.md` §9.2: set `FILLER_DELAY_MS = 1` in
+5. **The filler** — `docs/TESTING.md` §9.2: set `FILLER_DELAY_MS = 1` in
    `src/lib/voice/filler.ts`, hold the mic, speak Arabic; it must play once, not
    appear in the transcript, and never overlap the answer.
-5. **No emoji or markdown in anything spoken** — `docs/TESTING.md` §9.3.
-6. **Missing key / rate limit honesty** — `docs/TESTING.md` §9.4.
-7. **Live conversation eval.** `EVAL_BASE_URL=http://localhost:3000 node scripts/eval-conversations.mjs`
-8. **Speech quality.** Whisper transcription and Arabic TTS are manual-only.
-9. **`docs/ARCHITECTURE.md` §10.8 DST edge**, partly guarded by smoke section L.
+6. **No emoji or markdown in anything spoken** — `docs/TESTING.md` §9.3.
+7. **Missing key / rate limit honesty** — `docs/TESTING.md` §9.4.
+8. **Live conversation eval.** `EVAL_BASE_URL=http://localhost:3000 node scripts/eval-conversations.mjs`
+9. **Speech quality.** Whisper transcription and Arabic TTS are manual-only.
+10. **`docs/ARCHITECTURE.md` §10.8 DST edge**, partly guarded by smoke section L.
 
 ## Known risks
 
-- **Nemotron's Arabic and its JSON/tool-call reliability are untested.** Everything
-  downstream — the screen contract, the repair path, the prompt's rules — is
-  exercised only against the unit tests and the API smoke until the eval and the
-  human script in `docs/TESTING.md` §9 run on a live gateway. If Nemotron drifts
-  off-format, the repair path fires and the caller hears "that step could not be
-  completed", which is honest but slow.
+- **Nemotron's conformance is now measured, and it drifts in specific ways.**
+  Eight scripted runs (`docs/TESTING.md` §9.10): 3–6 of 8 turns clean, never 8/8.
+  The English turn was never answered in English (Arabic 6 runs, prose-instead-of-
+  JSON 2); `identify_patient` received a fragment of the caller's name (`"مع"` for
+  `محمد علي`) in every run; 3 runs claimed a booking that no `confirm_booking` row
+  supports, one of them while `confirm_booking` had returned `APPROVAL_PENDING`;
+  one run made **zero** tool calls for the whole conversation while every screen
+  looked plausible. The repair path fires on 4 of 8 runs and sometimes fails
+  again, which is honest but slow. Until the runtime prompt is tightened, treat a
+  spoken confirmation as unverified unless `audit_events` has the row.
 - **A stale availability snapshot** is bounded by design: it is advisory only and
   is refreshed after 60 s, and `hold_slot` is authoritative, so the worst case is
   an agent offering a slot that then fails to hold and offering another.
@@ -90,14 +132,21 @@ checks), `README.md`.
   environment; the app only talks to the gateway.
 - **The failover is a config claim, not a tested path.** `google/gemini-3.8-flash`
   exists in `openclaw.json5` as the agent's fallback, but a native agent primary is
-  strict in OpenClaw and the failover has not been observed firing.
+  strict in OpenClaw and the failover has not been observed firing. Its own quota
+  is spent, so it has produced no tokens at all in any run — see §9.10.
 
 ## Next session's first action
 
-1. Bring up the gateway with `NVIDIA_API_KEY` and run the A/B pair in
-   `openclaw/README.md` §2 — that settles the whole model-switch question.
-2. Then `npm run clinic:latency` twice (Nemotron, Gemini) and paste the tables
-   into `docs/TESTING.md` §9.5; that is the number the task asked for.
+1. Decide what to do about the three measured Nemotron defects: the English turn
+   (a language rule the prompt does not enforce), the truncated `full_name`, and
+   confirmations spoken without a successful `confirm_booking`. The first two are
+   prompt material (`docs/PROMPTS.md` **and** `openclaw/agents/clinic-receptionist/
+   AGENTS.md` together, then `npm run check:prompts`); the third is a bridge guard:
+   refuse to speak a "booked" screen when no successful `confirm_booking` row
+   exists in the turn.
+2. Re-run `npm run clinic:model-ab` for both legs once the Google key has quota —
+   the Gemini leg is BLOCKED today, not failing. `npm run clinic:latency` twice
+   (Nemotron, Gemini) still fills `docs/TESTING.md` §9.5.
 3. Then the human voice script in `docs/TESTING.md` §9.2–§9.4 (filler, no emoji,
    honesty under 429).
 4. Then decide whether `find_doctor` should be named in the runtime prompt —
