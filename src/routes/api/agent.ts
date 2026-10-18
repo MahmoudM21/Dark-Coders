@@ -96,7 +96,11 @@ function parseSseLine(line: string) {
   }
 }
 
-async function collectModelOutput(response: Response, onReasoning: (delta: string) => void) {
+async function collectModelOutput(
+  response: Response,
+  onReasoning: (delta: string) => void,
+  onFirstEvent?: () => void,
+) {
   if (!response.ok || !response.body) {
     const detail = (await response.text()).slice(0, 300);
     throw new Error(`MODEL_HTTP_${response.status}:${detail}`);
@@ -105,6 +109,7 @@ async function collectModelOutput(response: Response, onReasoning: (delta: strin
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";
   let output = "";
+  let sawEvent = false;
   while (true) {
     const next = await reader.read();
     if (next.done) break;
@@ -114,6 +119,10 @@ async function collectModelOutput(response: Response, onReasoning: (delta: strin
     for (const segment of segments) {
       const event = parseSseLine(segment);
       if (!event) continue;
+      if (!sawEvent) {
+        sawEvent = true;
+        onFirstEvent?.();
+      }
       if (event.type === "response.reasoning_summary_text.delta" && event.delta) onReasoning(event.delta);
       if (event.type === "response.output_text.delta" && event.delta) output += event.delta;
       if (event.type === "response.output_text.done" && typeof event.text === "string") output = event.text;
@@ -143,6 +152,37 @@ async function auditBridgeEvent(entry: Record<string, unknown>) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`[bridge.audit] ${message}\n`);
+  }
+}
+
+/** Clinic tool calls made during this turn: audit rows, not a model claim. */
+async function countClinicToolCalls(sessionId: string, sinceIso: string): Promise<number | null> {
+  try {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const client = supabaseAdmin as unknown as {
+      from: (table: string) => {
+        select: (fields: string) => {
+          eq: (col: string, value: unknown) => {
+            eq: (col2: string, value2: unknown) => {
+              gte: (col3: string, value3: unknown) => Promise<{
+                data: Array<Record<string, unknown>> | null;
+                error: { message?: string | null } | null;
+              }>;
+            };
+          };
+        };
+      };
+    };
+    const { data, error } = await client
+      .from("audit_events")
+      .select("at")
+      .eq("session_id", sessionId)
+      .eq("event", "tool_call")
+      .gte("at", sinceIso);
+    if (error) return null;
+    return data?.length ?? 0;
+  } catch {
+    return null;
   }
 }
 
@@ -203,6 +243,10 @@ export const Route = createFileRoute("/api/agent")({
           return streamResponses(request, input, { text: { format: OUTPUT_FORMAT } }, model);
         }
 
+        // Everything below is measured for one clinic turn. The numbers go to the console as
+        // one step and to a single audit_events row; none of them carries caller data.
+        const turnStarted = Date.now();
+
         const parsedSession = z.string().uuid().safeParse(sessionId);
         if (!parsedSession.success) return json({ error: "session_id must be a UUID" }, 400);
         const clinicSessionId = parsedSession.data;
@@ -225,6 +269,8 @@ export const Route = createFileRoute("/api/agent")({
         const prefetchArgs = { p_session: clinicSessionId, p_days: 2, p_limit: 5 };
 
         // Both RPCs are independent, so they run together rather than one after the other.
+        const openStarted = Date.now();
+        let prefetchMs: number | null = null;
         const [openSession, firstPrefetch] = await Promise.all([
           callRpc(
             "clinic_open_session",
@@ -237,9 +283,13 @@ export const Route = createFileRoute("/api/agent")({
             { requestId: clinicSessionId },
           ),
           refreshSnapshot
-            ? callRpc("clinic_prefetch_availability", prefetchArgs, { requestId: clinicSessionId })
+            ? callRpc("clinic_prefetch_availability", prefetchArgs, { requestId: clinicSessionId }).then((value) => {
+                prefetchMs = Date.now() - openStarted;
+                return value;
+              })
             : Promise.resolve(null),
         ]);
+        const sessionOpenMs = Date.now() - openStarted;
         if (isErrorEnvelope(openSession)) {
           return json({ error: openSession.error.message }, 502);
         }
@@ -249,7 +299,9 @@ export const Route = createFileRoute("/api/agent")({
         // that the session is open.
         let prefetch = firstPrefetch;
         if (prefetch && isErrorEnvelope(prefetch) && prefetch.error.code === "NOT_FOUND") {
+          const retryStarted = Date.now();
           prefetch = await callRpc("clinic_prefetch_availability", prefetchArgs, { requestId: clinicSessionId });
+          prefetchMs = (prefetchMs ?? 0) + (Date.now() - retryStarted);
         }
         const freshSnapshot = prefetch ? parseAvailabilitySnapshot(prefetch, Date.now()) : null;
         if (freshSnapshot) snapshotCache.set(clinicSessionId, freshSnapshot);
@@ -325,10 +377,13 @@ export const Route = createFileRoute("/api/agent")({
         const infoKeyPrefix = `${tenantSlug}#`;
         const cachedInfo = activeSnapshot ? clinicInfoCache.get(`${infoKeyPrefix}${activeSnapshot.branchRef ?? "-"}`) : null;
         let infoPayload: Record<string, unknown>;
+        let clinicInfoMs = 0;
         if (cachedInfo) {
           infoPayload = cachedInfo;
         } else {
+          const infoStarted = Date.now();
           const clinicInfo = await callRpc("clinic_get_info", { p_session: clinicSessionId }, { requestId: clinicSessionId });
+          clinicInfoMs = Date.now() - infoStarted;
           if (isErrorEnvelope(clinicInfo)) {
             return json({ error: clinicInfo.error.message }, 502);
           }
@@ -336,6 +391,31 @@ export const Route = createFileRoute("/api/agent")({
           const payloadBranch = infoPayload["selected_branch_ref"];
           clinicInfoCache.set(`${infoKeyPrefix}${typeof payloadBranch === "string" ? payloadBranch : "-"}`, infoPayload);
         }
+        // Experimental history mode: the Gateway owns the conversation, and the bridge adds
+        // the facts the model must not re-ask. Off unless explicitly selected; a read
+        // failure is logged and the turn continues without the block rather than inventing it.
+        const sessionMode = process.env["CLINIC_GATEWAY_SESSION"] ?? "stateless";
+        const deltaMode = sessionMode === "agent-scoped-delta";
+        let deltaState: string | null = null;
+        if (deltaMode) {
+          try {
+            const { readTurnState, turnStateMessage } = await import("@/lib/clinic/turn-state.server");
+            const state = await readTurnState(clinicSessionId);
+            deltaState = state ? turnStateMessage(state) : null;
+          } catch (error) {
+            process.stderr.write(
+              `[bridge.state] ${error instanceof Error ? error.message : String(error)}\n`,
+            );
+            await auditBridgeEvent({
+              session_id: clinicSessionId,
+              actor: "bridge",
+              event: "turn_state_failed",
+              outcome: "error",
+              error_code: "STATE_READ_FAILED",
+            });
+          }
+        }
+
         const contextMessages = [
           {
             role: "system",
@@ -372,14 +452,27 @@ export const Route = createFileRoute("/api/agent")({
                 },
               ]
             : []),
+          ...(deltaState
+            ? [
+                {
+                  role: "system",
+                  content: [{ type: "input_text", text: deltaState }],
+                },
+              ]
+            : []),
         ];
 
         const mergesHistory = process.env["OPENCLAW_GATEWAY_MERGES_HISTORY"] === "1";
-        const selectedTurns = mergesHistory
-          ? turns.slice().reverse().find((turn) => turn.role === "user")
-            ? [turns.slice().reverse().find((turn) => turn.role === "user") as Turn]
+        const lastUserTurn = [...turns].reverse().find((turn) => turn.role === "user");
+        const selectedTurns = deltaMode
+          ? lastUserTurn
+            ? [lastUserTurn]
             : turns.slice(-1)
-          : turns.slice(-12);
+          : mergesHistory
+            ? lastUserTurn
+              ? [lastUserTurn]
+              : turns.slice(-1)
+            : turns.slice(-12);
 
         const baseInput = [
           ...contextMessages,
@@ -389,7 +482,19 @@ export const Route = createFileRoute("/api/agent")({
         const gatewayHeaders: Record<string, string> = {
           "x-openclaw-agent-id": agentId,
         };
-        if (process.env["CLINIC_GATEWAY_SESSION"] === "agent-scoped") {
+        // Model A/B harness only. Off by default, restricted to the two models under test,
+        // and it changes the backend model for this request only — never the agent config.
+        if (process.env["CLINIC_AB_MODEL_OVERRIDE"] === "1") {
+          const requestedModel = request.headers.get("x-clinic-backend-model");
+          const AB_MODELS = ["nvidia/nvidia/nemotron-3-super-120b-a12b", "google/gemini-3.8-flash"];
+          if (requestedModel) {
+            if (!AB_MODELS.includes(requestedModel)) {
+              return json({ error: `x-clinic-backend-model must be one of: ${AB_MODELS.join(", ")}` }, 400);
+            }
+            gatewayHeaders["x-openclaw-model"] = requestedModel;
+          }
+        }
+        if (sessionMode === "agent-scoped" || deltaMode) {
           gatewayHeaders["x-openclaw-session-key"] = `agent:${agentId}:clinic-${clinicSessionId}`;
         }
 
@@ -423,6 +528,8 @@ export const Route = createFileRoute("/api/agent")({
                 });
               };
 
+              const gatewayStarted = Date.now();
+              let firstEventMs: number | null = null;
               const response = await callModelWithRateLimitRetry({
                 call: () => callModel(baseInput),
                 onRateLimited: auditRateLimited,
@@ -432,15 +539,27 @@ export const Route = createFileRoute("/api/agent")({
                 return;
               }
 
-              let raw = await collectModelOutput(response, (delta) => {
-                send({ type: "response.reasoning_summary_text.delta", delta });
-              });
+              let raw = await collectModelOutput(
+                response,
+                (delta) => {
+                  send({ type: "response.reasoning_summary_text.delta", delta });
+                },
+                () => {
+                  if (firstEventMs === null) firstEventMs = Date.now() - gatewayStarted;
+                },
+              );
+              const gatewayMs = Date.now() - gatewayStarted;
 
               // Sanitise before validating: emoji and markdown are stripped from the text,
               // labels and values, and a screen that was only emoji becomes "" and fails
               // the schema below, which sends it down the repair path instead of speaking it.
+              const validationStarted = Date.now();
               let parsed = screenSchema.safeParse(sanitizeScreenPayload(JSON.parse(extractJson(raw))));
+              let validationMs = Date.now() - validationStarted;
+              let repairMs: number | null = null;
+              let repairUsed = false;
               if (!parsed.success) {
+                repairUsed = true;
                 await auditBridgeEvent({
                   session_id: clinicSessionId,
                   actor: "bridge",
@@ -470,8 +589,12 @@ export const Route = createFileRoute("/api/agent")({
                   send({ type: "response.output_text.done", text: JSON.stringify(busyScreen(locale)) });
                   return;
                 }
+                const repairStarted = Date.now();
                 raw = await collectModelOutput(repairResponse, () => {});
+                const revalidationStarted = Date.now();
                 parsed = screenSchema.safeParse(sanitizeScreenPayload(JSON.parse(extractJson(raw))));
+                validationMs += Date.now() - revalidationStarted;
+                repairMs = Date.now() - repairStarted;
               }
 
               const safe = parsed.success
@@ -532,7 +655,31 @@ export const Route = createFileRoute("/api/agent")({
                 }
               }
 
+              // One turn, measured stage by stage. The tool count comes from audit rows for
+              // this session (what actually ran), never from the model's own claim.
+              const toolCalls = await countClinicToolCalls(clinicSessionId, new Date(turnStarted).toISOString());
+              const timing = {
+                session_open_ms: sessionOpenMs,
+                prefetch_ms: prefetchMs,
+                clinic_info_ms: clinicInfoMs,
+                context_ms: (prefetchMs ?? 0) + clinicInfoMs,
+                gateway_first_event_ms: firstEventMs,
+                gateway_ms: gatewayMs,
+                validation_ms: validationMs,
+                repair_used: repairUsed,
+                repair_ms: repairMs,
+                tool_calls: toolCalls,
+                total_ms: Date.now() - turnStarted,
+              };
+              send({ type: "bridge.timing", timing });
               send({ type: "response.output_text.done", text: JSON.stringify(safe) });
+              await auditBridgeEvent({
+                session_id: clinicSessionId,
+                actor: "bridge",
+                event: "turn_timing",
+                outcome: "ok",
+                input: timing,
+              });
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
               send({

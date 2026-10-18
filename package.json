@@ -18,6 +18,7 @@
     "clinic:latency": "node scripts/latency-probe.mjs",
     "clinic:stt-probe": "node scripts/stt-probe.mjs",
     "clinic:warmup": "node scripts/clinic-warmup.mjs",
+    "clinic:model-ab": "node scripts/model-ab.mjs",
     "clinic:openclaw-merge": "node scripts/merge-openclaw-config.mjs",
     "lint": "eslint .",
     "format": "prettier --write ."

@@ -4,15 +4,20 @@
 //   npm run clinic:latency
 //   CLINIC_LATENCY_LABEL=nemotron npm run clinic:latency     # label this run
 //   CLINIC_LATENCY_LABEL=stateless npm run clinic:latency
+//   CLINIC_LATENCY_RUNS=5 npm run clinic:latency             # five passes over the script
 //   CLINIC_LATENCY_LABEL=agent-scoped CLINIC_GATEWAY_SESSION=agent-scoped npm run clinic:latency
 //
-// It drives four voice-like turns (what a caller says, not tool names) through the
+// It drives voice-like turns (what a caller says, not tool names) through the
 // REAL /api/agent bridge and prints, per turn:
 //   * ms to the first reasoning delta (the moment the console can show progress)
 //   * ms to response.output_text.done (the moment the answer is ready to speak)
 //   * how many clinic tool calls happened in that window, counted from audit_events
 //     for the session between the request's start and end timestamps (the timestamp
 //     column is `at`; there is no `created_at` on that table)
+//   * the bridge's own stage breakdown from its `bridge.timing` event
+//
+// The last table is the summary: median and p90 of answer-ready and of the bridge's
+// total, over every measured turn in the run.
 //
 // It needs a live app (npm run dev), a live OpenClaw gateway with the clinic agent
 // registered, and SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY to read audit_events. If
@@ -65,6 +70,7 @@ function refuse(reason, howTo) {
 const BASE = (env("CLINIC_API_URL") || "http://localhost:3000").replace(/\/$/, "");
 const LABEL = env("CLINIC_LATENCY_LABEL") || "current agent configuration";
 const SESSION_MODE = env("CLINIC_GATEWAY_SESSION") || "stateless";
+const RUNS = Math.max(1, Number(env("CLINIC_LATENCY_RUNS") || 1));
 
 /** One turn, phrased the way an Egyptian-Arabic caller would say it out loud. */
 const SCRIPT = [
@@ -110,6 +116,7 @@ async function runTurn(text, sessionId, history) {
   let firstReasoningMs = null;
   let answerMs = null;
   let screen = null;
+  let timing = null;
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";
   while (true) {
@@ -122,6 +129,9 @@ async function runTurn(text, sessionId, history) {
       if (event.type === "response.reasoning_summary_text.delta" && firstReasoningMs === null) {
         firstReasoningMs = Date.now() - started;
       }
+      if (event.type === "bridge.timing" && event.timing) {
+        timing = event.timing;
+      }
       if (event.type === "response.output_text.done") {
         answerMs = Date.now() - started;
         try {
@@ -133,7 +143,7 @@ async function runTurn(text, sessionId, history) {
     }
   }
 
-  return { started, ended: Date.now(), firstReasoningMs, answerMs, screen, error: null };
+  return { started, ended: Date.now(), firstReasoningMs, answerMs, screen, timing, error: null };
 }
 
 async function readAuditWindow(supabase, sessionId, started, ended) {
@@ -155,6 +165,19 @@ function modelFailure(rows) {
   );
   if (!hit) return null;
   return hit.event + (hit.error_code ? " (" + hit.error_code + ")" : "");
+}
+
+/** Nearest-rank percentile; returns null for an empty list rather than inventing a number. */
+function percentile(values, p) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return sorted[index];
+}
+
+function statsLine(label, values) {
+  if (!values.length) return label + ": n/a (no measured turns)";
+  return label + ": median " + percentile(values, 50) + " ms, p90 " + percentile(values, 90) + " ms (n=" + values.length + ")";
 }
 
 function firstNote(...candidates) {
@@ -207,7 +230,11 @@ async function main() {
   const sessionId = crypto.randomUUID();
   const history = [];
   const rows = [];
-  for (const step of SCRIPT) {
+  const plan = [];
+  for (let run = 0; run < RUNS; run += 1) {
+    for (const step of SCRIPT) plan.push({ ...step, label: RUNS > 1 ? `${run + 1}.${step.label}` : step.label });
+  }
+  for (const step of plan) {
     const turn = await runTurn(step.text, sessionId, history);
     const audit = await readAuditWindow(supabase, sessionId, turn.started, turn.ended);
     const failure = modelFailure(audit.rows);
@@ -216,6 +243,7 @@ async function main() {
       firstReasoning: turn.firstReasoningMs,
       answer: turn.answerMs,
       tools: audit.count,
+      timing: turn.timing,
       failure,
       notes: firstNote(
         turn.error,
@@ -232,6 +260,9 @@ async function main() {
     if (turn.screen && turn.screen.screen && typeof turn.screen.screen.text === "string") {
       history.push({ role: "assistant", text: turn.screen.screen.text });
     }
+    // The bridge sends the whole recent history every turn; keep the probe's own copy
+    // bounded so later turns do not grow without limit.
+    if (history.length > 8) history.splice(0, history.length - 8);
   }
 
   if (rows.length > 0 && rows.every((row) => row.failure !== null)) {
@@ -270,6 +301,55 @@ async function main() {
   console.log("|" + widths.map((w) => "-".repeat(w + 2)).join("|") + "|");
   for (const line of table.slice(1)) {
     console.log("| " + line.map((cell, i) => cell.padEnd(widths[i])).join(" | ") + " |");
+  }
+
+  const measured = rows.filter((row) => row.timing !== null);
+  if (measured.length) {
+    const fields = [
+      ["Session open", "session_open_ms"],
+      ["Context", "context_ms"],
+      ["Clinic info", "clinic_info_ms"],
+      ["Availability", "prefetch_ms"],
+      ["First event", "gateway_first_event_ms"],
+      ["Gateway total", "gateway_ms"],
+      ["Validation", "validation_ms"],
+      ["Repair", "repair_ms"],
+      ["Total", "total_ms"],
+    ];
+    const breakdownHeaders = ["Turn", ...fields.map(([label]) => label + " (ms)"), "Tool calls"];
+    const breakdown = [breakdownHeaders].concat(
+      measured.map((row) => [
+        row.label,
+        ...fields.map(([, key]) => {
+          const value = row.timing[key];
+          return typeof value === "number" ? String(value) : "n/a";
+        }),
+        row.timing.tool_calls === null || row.timing.tool_calls === undefined ? "n/a" : String(row.timing.tool_calls),
+      ]),
+    );
+    const widths = breakdownHeaders.map((_, column) => Math.max(...breakdown.map((line) => line[column].length)));
+    console.log("\nBridge stage breakdown (from the bridge.timing event):");
+    console.log("| " + breakdown[0].map((cell, i) => cell.padEnd(widths[i])).join(" | ") + " |");
+    console.log("|" + widths.map((w) => "-".repeat(w + 2)).join("|") + "|");
+    for (const line of breakdown.slice(1)) {
+      console.log("| " + line.map((cell, i) => cell.padEnd(widths[i])).join(" | ") + " |");
+    }
+
+    const answerValues = measured.map((row) => row.answer).filter((value) => typeof value === "number");
+    const totalValues = measured
+      .map((row) => row.timing.total_ms)
+      .filter((value) => typeof value === "number");
+    const gatewayValues = measured
+      .map((row) => row.timing.gateway_ms)
+      .filter((value) => typeof value === "number");
+    console.log("\nSummary over " + measured.length + " measured turn(s)");
+    console.log("  " + statsLine("Answer ready (client view)", answerValues));
+    console.log("  " + statsLine("Bridge total", totalValues));
+    console.log("  " + statsLine("Gateway", gatewayValues));
+    const repaired = measured.filter((row) => row.timing.repair_used === true).length;
+    console.log("  Repairs used: " + repaired + " of " + measured.length);
+  } else {
+    console.log("\nNo bridge.timing events were seen, so there is no stage breakdown to print.");
   }
 
   console.log("\nSession: " + sessionId + " (label: " + LABEL + ")");
