@@ -169,13 +169,25 @@ async function checkGateway() {
   }
 }
 
-async function checkAgent() {
+function agentConfig() {
+  const id = env("CLINIC_AGENT_ID") || "clinic-receptionist";
+  return { id, model: `openclaw/${id}` };
+}
+
+function preflightTimeoutMs() {
+  const raw = Number(env("CLINIC_PREFLIGHT_TIMEOUT_MS"));
+  return Number.isFinite(raw) && raw > 0 ? raw : 120000;
+}
+
+/** One turn against the gateway. Returns enough detail for the caller to report the real outcome. */
+async function agentTurn(content) {
   const url = env("OPENCLAW_GATEWAY_URL");
-  if (!url) {
-    record("UNVERIFIED", "agent clinic-receptionist", "needs OPENCLAW_GATEWAY_URL");
-    return;
-  }
+  const { id: agentId, model } = agentConfig();
+  const timeoutMs = preflightTimeoutMs();
+  const started = Date.now();
   try {
+    // The agent id travels in the header, exactly as the bridge sends it; no session key, so the
+    // gateway opens a throwaway stateless conversation instead of failing on an unknown session.
     const response = await withTimeout(
       (signal) =>
         fetch(`${url.replace(/\/$/, "")}/v1/chat/completions`, {
@@ -183,33 +195,93 @@ async function checkAgent() {
           signal,
           headers: {
             "Content-Type": "application/json",
+            "x-openclaw-agent-id": agentId,
             ...(env("OPENCLAW_API_KEY") ? { Authorization: `Bearer ${env("OPENCLAW_API_KEY")}` } : {}),
           },
-          body: JSON.stringify({
-            model: "openclaw/clinic-receptionist",
-            stream: false,
-            max_tokens: 1,
-            messages: [{ role: "user", content: "ping" }],
-          }),
+          body: JSON.stringify({ model, stream: false, messages: [{ role: "user", content }] }),
         }),
-      15000,
+      timeoutMs,
     );
-    const body = (await response.text()).slice(0, 300);
-    if (response.ok) {
+    const body = await response.text();
+    return { response, body, elapsed: Date.now() - started, timeoutMs };
+  } catch (error) {
+    return { error, elapsed: Date.now() - started, timeoutMs };
+  }
+}
+
+/** True when a chat-completions body carries the screen envelope the console requires. */
+function validScreenBody(body) {
+  try {
+    const payload = JSON.parse(body);
+    if (payload?.error) return { ok: false, code: payload.error.code ?? payload.error.type, message: payload.error.message };
+    const content = payload?.choices?.[0]?.message?.content;
+    const raw = typeof content === "string" ? content : JSON.stringify(content);
+    const screen = JSON.parse(raw);
+    const ok = screen?.kind === "screen" && typeof screen?.screen?.text === "string" && screen.screen.text.trim().length > 0;
+    return { ok, screen };
+  } catch {
+    return { ok: false };
+  }
+}
+
+async function checkAgent() {
+  const url = env("OPENCLAW_GATEWAY_URL");
+  if (!url) {
+    record("UNVERIFIED", "agent clinic-receptionist", "needs OPENCLAW_GATEWAY_URL");
+    return;
+  }
+  const first = await agentTurn("ping");
+  if (first.error) {
+    const aborted = first.error?.name === "AbortError" || /abort/i.test(String(first.error?.message));
+    record(
+      "FAIL",
+      "agent clinic-receptionist",
+      aborted
+        ? `timed out after ${first.elapsed} ms (CLINIC_PREFLIGHT_TIMEOUT_MS=${first.timeoutMs}). A cold gateway turn can exceed 15 s; raise the timeout or rerun with --warmup once the agent is warm. No HTTP status was received.`
+        : `no HTTP answer after ${first.elapsed} ms: ${first.error instanceof Error ? first.error.message : String(first.error)} — is the gateway on ${url}?`,
+    );
+    return;
+  }
+  const { response, body, elapsed } = first;
+  const { model: agentModel } = agentConfig();
+  const verdict = validScreenBody(body);
+  if (response.ok && verdict.ok) {
+    record(
+      elapsed > 15000 ? "WARN" : "PASS",
+      "agent clinic-receptionist",
+      elapsed > 15000
+        ? `valid screen JSON from ${agentModel} (HTTP ${response.status}) but the turn took ${elapsed} ms — slower than the 15 s budget. Run: node scripts/preflight.mjs --warmup`
+        : `valid screen JSON from ${agentModel} (HTTP ${response.status}) in ${elapsed} ms`,
+    );
+  } else if (response.ok && !verdict.ok) {
+    record(
+      "FAIL",
+      "agent clinic-receptionist",
+      `HTTP ${response.status} after ${elapsed} ms but the reply is not valid screen JSON (needs kind:"screen" and a non-empty screen.text): ${body.slice(0, 600)}`,
+    );
+  } else {
+    const code = verdict.code ? ` error code ${JSON.stringify(verdict.code)}` : "";
+    record("FAIL", "agent clinic-receptionist", `HTTP ${response.status} after ${elapsed} ms${code}: ${body.slice(0, 600)}`);
+  }
+
+  // --warmup: two more turns, so the model/provider connection and any lazy tool init are hot
+  // before a human starts a demo. Each turn is timed and reported separately.
+  if (process.argv.includes("--warmup") && response.ok && verdict.ok) {
+    for (const [index, content] of ["hi", "thanks"].entries()) {
+      const turn = await agentTurn(content);
+      if (turn.error) {
+        record("FAIL", `agent warmup ${index + 2}/3`, `no HTTP answer after ${turn.elapsed} ms: ${turn.error instanceof Error ? turn.error.message : String(turn.error)}`);
+        break;
+      }
+      const warmed = validScreenBody(turn.body);
       record(
-        "PASS",
-        "agent clinic-receptionist",
-        `gateway accepted model openclaw/clinic-receptionist (HTTP ${response.status}); the agent's own model (Nemotron 3 Super, NVIDIA_API_KEY on the gateway) is only exercised on a real turn`,
-      );
-    } else {
-      record(
-        "FAIL",
-        "agent clinic-receptionist",
-        `HTTP ${response.status}: ${body} — merge openclaw/openclaw.json5 into ~/.openclaw/openclaw.json, enable gateway.http.endpoints.chatCompletions.enabled and set NVIDIA_API_KEY in the gateway environment (GEMINI_API_KEY too if you want the google/gemini-3.8-flash failover). A 429 here means the gateway is rate-limited upstream.`,
+        turn.response.ok && warmed.ok ? "PASS" : "FAIL",
+        `agent warmup ${index + 2}/3`,
+        turn.response.ok && warmed.ok
+          ? `valid screen JSON in ${turn.elapsed} ms`
+          : `HTTP ${turn.response.status} after ${turn.elapsed} ms: ${turn.body.slice(0, 600)}`,
       );
     }
-  } catch (error) {
-    record("FAIL", "agent clinic-receptionist", error instanceof Error ? error.message : String(error));
   }
 }
 
