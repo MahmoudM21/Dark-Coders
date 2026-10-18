@@ -118,8 +118,9 @@ The next section is the previous session's record and is kept as history.
   `محمد علي`) in every run; 3 runs claimed a booking that no `confirm_booking` row
   supports, one of them while `confirm_booking` had returned `APPROVAL_PENDING`;
   one run made **zero** tool calls for the whole conversation while every screen
-  looked plausible. The repair path fires on 4 of 8 runs and sometimes fails
-  again, which is honest but slow. Until the runtime prompt is tightened, treat a
+  looked plausible. The repair path fired in 4 of 8 runs, and 4 of its 5 attempts
+  failed to fix the reply — the caller then hears the generic screen after real
+  work has already happened, which is honest but slow. Until the runtime prompt is tightened, treat a
   spoken confirmation as unverified unless `audit_events` has the row.
 - **A stale availability snapshot** is bounded by design: it is advisory only and
   is refreshed after 60 s, and `hold_slot` is authoritative, so the worst case is

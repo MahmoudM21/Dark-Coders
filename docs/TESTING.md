@@ -613,13 +613,13 @@ will fill the second leg in the same shape.
 | Drift | How often | Evidence |
 |---|---|---|
 | **The English turn is never answered in English.** | 8/8 runs: Arabic screen 6, prose instead of JSON 2. | `What are your opening hours?` → `عيادة ديمو مفتوحة من الأحد للسبت…`. In `2f587324` and `8b98e0e3` it was not JSON at all: bridge `Unexpected token 'ف'` / `Unexpected token 'I', "I need to "`, so the caller heard the generic failure screen. |
-| **`identify_patient` gets a mutilated name.** | 8 calls across 7/8 runs; every single call so far | `{"phone":"***223","full_name":"مع"}` for a caller who said `اسمي محمد علي`. The patient record is then identified against a fragment. |
+| **`identify_patient` gets a mutilated name.** | 8 calls across 7 of the 8 runs | `{"phone":"***223","full_name":"مع"}` for a caller who said `اسمي محمد علي`. The patient record is then identified against a fragment. |
 | **Says it booked when nothing was booked.** | 3/8 runs | `تم الحجز! … كود التأكيد: ABC123` / `…: 6f2d4c1b-…` with **0** `confirm_booking` rows; in `ad6eca81` `confirm_booking` ran and returned `APPROVAL_PENDING` while the screen said `تم تأكيد الحجز … رمز التأكيد: CCD557`. |
 | **Never touches a tool at all.** | 1/8 runs (`e7560737`) | 0 `tool_call` rows for the whole conversation: no `select_branch`, no `hold_slot`, no booking, while every screen stayed plausible. |
-| **The urgent turn does not escalate.** | 4/7 runs with no `escalate_to_human`; 3/7 escalated (twice). | `عندي ألم شديد` → `اتصل بالإسعاف فورًا على 123. حاولت أبلغ فريق العيادة بس معرفتش أتأكد إنهم وصلهم` with no escalation row. |
-| **Repeats one tool with identical arguments.** | 3/8 runs | `add_note` 3× identical, `list_my_appointments` 2× identical, `check_availability` 3× identical — inside one turn (the worst turn cost 147.9 s). |
+| **The urgent turn does not escalate.** | `escalate_to_human` ran in 3 of 8 runs; in the other 5 the pain turn ended with no escalation row (one of those 5 made no tool calls at all). | `عندي ألم شديد` → `اتصل بالإسعاف فورًا على 123. حاولت أبلغ فريق العيادة بس معرفتش أتأكد إنهم وصلهم` with no escalation row. |
+| **Repeats one tool with identical arguments.** | 4 of 7 runs that used tools | `check_availability` 3×, `add_note` 3×, `list_my_appointments` 2×, `select_branch` 2×, `identify_patient` 2× — all byte-identical arguments inside one turn (the worst turn cost 147.9 s). |
 | **Leaks non-Arabic text into Arabic speech.** | 3/8 runs | `هيواصل معاك afterward`, `…للموافقة على لوحة التحكم.branches`, `السبت بعد 5 مساءً؟ أمinate؟`. |
-| **A repair that the repair cannot fix.** | 4/8 runs | `repair_attempt (VALIDATION_ERROR)` then the *repaired* output also failed, so the caller heard `تعذر إكمال هذه الخطوة…` after real work had already happened. |
+| **A repair that cannot fix the reply.** | 4 of the 5 repair attempts, in 3 of 8 runs | `repair_attempt (VALIDATION_ERROR)` then the *repaired* output failed validation too, so the caller heard `تعذر إكمال هذه الخطوة…` after real work had already happened. The repair path fired in 4 runs in total; one of the five attempts (`e7560737`, the English turn) did succeed. |
 | **Re-asks for what it already has.** | 3/8 runs | `ممكن أعرف اسم حضرتك الكامل؟` two turns after `اسمي محمد علي`; in `9bc84ff4` it re-asked for the phone in the turn after the phone. |
 | **Offers more than three times in one sentence.** | 2/8 runs | `6 أو 6:30 أو 7 أو 7:30 أو 8`. |
 
