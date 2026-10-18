@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiAgentRouteImport } from './routes/api/agent'
+import { Route as ApiAsrRouteImport } from './routes/api/asr'
 import { Route as ApiLlmRouteImport } from './routes/api/llm'
 import { Route as ApiSpeakRouteImport } from './routes/api/speak'
 import { Route as ApiTranscribeRouteImport } from './routes/api/transcribe'
@@ -24,6 +25,11 @@ const IndexRoute = IndexRouteImport.update({
 const ApiAgentRoute = ApiAgentRouteImport.update({
   id: '/api/agent',
   path: '/api/agent',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAsrRoute = ApiAsrRouteImport.update({
+  id: '/api/asr',
+  path: '/api/asr',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiLlmRoute = ApiLlmRouteImport.update({
@@ -50,6 +56,7 @@ const ApiClinicToolsRoute = ApiClinicToolsRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/agent': typeof ApiAgentRoute
+  '/api/asr': typeof ApiAsrRoute
   '/api/llm': typeof ApiLlmRoute
   '/api/speak': typeof ApiSpeakRoute
   '/api/transcribe': typeof ApiTranscribeRoute
@@ -58,6 +65,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/agent': typeof ApiAgentRoute
+  '/api/asr': typeof ApiAsrRoute
   '/api/llm': typeof ApiLlmRoute
   '/api/speak': typeof ApiSpeakRoute
   '/api/transcribe': typeof ApiTranscribeRoute
@@ -67,6 +75,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api/agent': typeof ApiAgentRoute
+  '/api/asr': typeof ApiAsrRoute
   '/api/llm': typeof ApiLlmRoute
   '/api/speak': typeof ApiSpeakRoute
   '/api/transcribe': typeof ApiTranscribeRoute
@@ -77,6 +86,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/api/agent'
+    | '/api/asr'
     | '/api/llm'
     | '/api/speak'
     | '/api/transcribe'
@@ -85,6 +95,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/api/agent'
+    | '/api/asr'
     | '/api/llm'
     | '/api/speak'
     | '/api/transcribe'
@@ -93,6 +104,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/api/agent'
+    | '/api/asr'
     | '/api/llm'
     | '/api/speak'
     | '/api/transcribe'
@@ -102,6 +114,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiAgentRoute: typeof ApiAgentRoute
+  ApiAsrRoute: typeof ApiAsrRoute
   ApiLlmRoute: typeof ApiLlmRoute
   ApiSpeakRoute: typeof ApiSpeakRoute
   ApiTranscribeRoute: typeof ApiTranscribeRoute
@@ -122,6 +135,13 @@ declare module '@tanstack/react-router' {
       path: '/api/agent'
       fullPath: '/api/agent'
       preLoaderRoute: typeof ApiAgentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/asr': {
+      id: '/api/asr'
+      path: '/api/asr'
+      fullPath: '/api/asr'
+      preLoaderRoute: typeof ApiAsrRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/llm': {
@@ -158,6 +178,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiAgentRoute: ApiAgentRoute,
+  ApiAsrRoute: ApiAsrRoute,
   ApiLlmRoute: ApiLlmRoute,
   ApiSpeakRoute: ApiSpeakRoute,
   ApiTranscribeRoute: ApiTranscribeRoute,

@@ -4,7 +4,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { Mic, Square, Radio, SlidersHorizontal, Paperclip, SendHorizontal, X as XIcon, RotateCcw, ThumbsUp, ListTree, Volume2, AlertTriangle, PanelsTopLeft, ScanFace } from "lucide-react";
 import { recordWav, type Recording } from "@/lib/voice/record-wav";
 import { transcribeRecording, type Turn } from "@/lib/voice/agent";
-import { transcribeLocal } from "@/lib/voice/local-asr";
+import { transcribeLocal, transcribeLocalViaApp } from "@/lib/voice/local-asr";
 import { createFillerScheduler, type FillerScheduler } from "@/lib/voice/filler";
 import { cleanRaw, runProvider } from "@/lib/voice/providers-client";
 import { BUILTIN, KIND_INFO, findProvider, type Provider } from "@/lib/settings/providers";
@@ -83,6 +83,11 @@ type Run = {
 };
 
 const newId = () => Math.random().toString(36).slice(2);
+
+/** Compact stage time for the console step: milliseconds below a second, seconds above. */
+function showMs(value: number | boolean | null | undefined) {
+  return typeof value === "number" ? (value >= 1000 ? `${(value / 1000).toFixed(1)} s` : `${value} ms`) : "n/a";
+}
 
 function VoiceConsole() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -195,6 +200,13 @@ function VoiceConsole() {
               fillerRef.current?.answerArrived();
               if (!writing) { writing = true; addStep("Writing reply"); }
               if (opts.typing) setRun((current) => (current ? { ...current, answer: partialText(cleanRaw(text)), stage: "streaming" } : current));
+            },
+            onTiming: (timing) => {
+              const tools = typeof timing["tool_calls"] === "number" ? `${timing["tool_calls"]} tool call${timing["tool_calls"] === 1 ? "" : "s"}` : "tool calls n/a";
+              addStep(
+                "Bridge timing",
+                `session ${showMs(timing["session_open_ms"])} · context ${showMs(timing["context_ms"])} · first event ${showMs(timing["gateway_first_event_ms"])} · gateway ${showMs(timing["gateway_ms"])} · total ${showMs(timing["total_ms"])} · ${tools}${timing["repair_used"] ? " · repaired" : ""}`,
+              );
             },
           }, signal);
           break;
@@ -309,9 +321,21 @@ function VoiceConsole() {
         addStep("Transcribing");
         const selectedVoice = settingsRef.current.voice;
         const onPartial = (partial: string) => setRun((current) => (current ? { ...current, heard: partial } : current));
-        const heard = selectedVoice.asrEngine === "local"
-          ? await transcribeLocal(file, selectedVoice.asrUrl, selectedVoice.asrModel, onPartial, controller.signal)
-          : await transcribeRecording(file, onPartial, controller.signal);
+        const heard = selectedVoice.asrEngine === "local-proxy"
+          ? await transcribeLocalViaApp(file, selectedVoice.asrLanguage ?? "", onPartial, controller.signal)
+          : selectedVoice.asrEngine === "local"
+            ? await transcribeLocal(file, selectedVoice.asrUrl, selectedVoice.asrModel, onPartial, controller.signal)
+            : await transcribeRecording(file, onPartial, controller.signal);
+        if (!heard.trim()) {
+          // The recognition language is the best signal of the caller's language: the app ships
+          // Arabic-first, and an English speaker sets "en" here.
+          const language = (selectedVoice.asrLanguage ?? "").toLowerCase();
+          const emptyMessage = language && !language.startsWith("ar")
+            ? "I didn't hear anything clear. Please try again."
+            : "ما سمعتش كلام واضح، جرّب تاني";
+          // Never send an empty turn to the agent.
+          throw new Error(emptyMessage);
+        }
         const userMessage: Message = { id: newId(), role: "user", text: heard, at: Date.now() };
         addStep("Heard", heard.length > 60 ? `${heard.slice(0, 60)}…` : heard);
         const history = appendMessage(userMessage);

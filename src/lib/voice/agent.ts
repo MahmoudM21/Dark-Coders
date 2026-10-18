@@ -83,27 +83,43 @@ export async function transcribeRecording(
 }
 
 /** Streams the agent answer, reporting reasoning summary text and answer deltas separately. */
+export type TurnTiming = Record<string, number | boolean | null>;
+
 export async function streamAgentAnswer(
   turns: Turn[],
-  handlers: { onThinking: (text: string) => void; onAnswer: (text: string) => void },
+  handlers: { onThinking: (text: string) => void; onAnswer: (text: string) => void; onTiming?: (timing: TurnTiming) => void },
   signal?: AbortSignal,
   context?: string,
   model?: string,
 ): Promise<string> {
   const session_id = resolveSessionId(turns);
-  const response = await fetch("/api/agent", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ turns, context, model, session_id }),
-    ...(signal ? { signal } : {}),
-  });
-  if (!response.ok) throw new Error(await readError(response, "The agent could not answer"));
+  let response: Response;
+  try {
+    response = await fetch("/api/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ turns, context, model, session_id }),
+      ...(signal ? { signal } : {}),
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new Error(
+      `The agent bridge at /api/agent could not be reached (${error instanceof Error ? error.message : String(error)}).` +
+        " The app server is probably not running, or the request never left the browser — check `npm run dev` and the Network tab.",
+      { cause: error },
+    );
+  }
+  if (!response.ok) {
+    const body = (await response.text()).slice(0, 300);
+    throw new Error(`The agent bridge returned HTTP ${response.status}: ${body || "(empty response)"}`);
+  }
 
   let answer = "";
   let thinking = "";
   await readSse(response, (data) => {
-    const payload = JSON.parse(data) as { type?: string; delta?: string; text?: string; error?: unknown };
+    const payload = JSON.parse(data) as { type?: string; delta?: string; text?: string; error?: unknown; timing?: TurnTiming };
     if (payload.error || payload.type === "error") throw new Error("The agent stream failed");
+    if (payload.type === "bridge.timing" && payload.timing) handlers.onTiming?.(payload.timing);
     if (payload.type === "response.reasoning_summary_text.delta" && payload.delta) {
       thinking += payload.delta;
       handlers.onThinking(thinking);

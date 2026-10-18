@@ -2,7 +2,7 @@ import { useLocal } from "@/lib/settings/store";
 import { speak } from "@/lib/voice/speak";
 
 export type VoiceEngine = "cloud" | "browser" | "kokoro";
-export type AsrEngine = "cloud" | "local";
+export type AsrEngine = "cloud" | "local-proxy" | "local";
 export type AgentProfile = { label: string; persona: string };
 export type VoiceSettings = {
   agent: string;
@@ -15,6 +15,8 @@ export type VoiceSettings = {
   asrEngine: AsrEngine;
   asrUrl: string;
   asrModel: string;
+  /** ISO-639-1 code sent to the ASR service; "" means the server's ASR_LANGUAGE default. */
+  asrLanguage: string;
   customAgents?: Record<string, AgentProfile>;
 };
 
@@ -42,7 +44,7 @@ export const ENGINE_LABEL: Record<VoiceEngine, string> = {
 };
 
 const VOICE_KEY = "openclaw.voice";
-export const DEFAULT_VOICE: VoiceSettings = { agent: "general", engine: "browser", rate: 1, standbyPause: 900, browserVoice: "", kokoroUrl: "http://localhost:8880", kokoroVoice: "af_heart", asrEngine: "local", asrUrl: "http://localhost:8000/v1", asrModel: "whisper-1", customAgents: {} };
+export const DEFAULT_VOICE: VoiceSettings = { agent: "general", engine: "browser", rate: 1, standbyPause: 900, browserVoice: "", kokoroUrl: "http://localhost:8880", kokoroVoice: "af_heart", asrEngine: "local-proxy", asrUrl: "http://localhost:8000/v1", asrModel: "Systran/faster-whisper-small", asrLanguage: "ar", customAgents: {} };
 export const useVoiceSettings = () => useLocal(VOICE_KEY, DEFAULT_VOICE);
 
 function speakBrowser(text: string, v: VoiceSettings, signal?: AbortSignal) {
