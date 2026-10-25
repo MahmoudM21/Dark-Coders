@@ -626,3 +626,54 @@ will fill the second leg in the same shape.
 The fabricated confirmation is the drift that matters most: it satisfies the
 screen contract with valid JSON, and only the audit row exposes it. The zero-tool
 run is its twin — nothing was booked and nothing looked wrong.
+
+#### After the guards (branch `fix/model-drift-guards`) — re-measurement BLOCKED
+
+Five of those drifts are now decided in code rather than by the model, so the
+A/B harness has to be able to tell "the model behaved" from "the bridge
+contained the model". It now prints, per leg and read only from `audit_events`:
+
+```
+false confirmations reaching the caller: 0 · blocked by the bridge: 2 ·
+emergency escalation: 5/5 scripted emergency turns · repeats deduped: 3 ·
+deadlines: 0 · repairs: 2 attempted, 1 still failing
+```
+
+- `CLINIC_AB_LEGS=nemotron` (or `gemini`) runs one leg; `CLINIC_AB_ONLY` still works.
+- Five red-flag turns are appended after the booking conversation
+  (`CLINIC_AB_EMERGENCY_TURNS=0` skips them), and each one is judged on two
+  things: an `emergency_precheck` (or successful `escalate_to_human`) row exists,
+  and the screen names an emergency number or explicitly says emergency.
+- The false-confirmation check now covers the Arabic and English claim list, the
+  confirmation-code shape and UUIDs, and it no longer counts a turn the bridge
+  blocked (`blocked_false_confirmation`) as a caller-facing failure — that is the
+  guard working, and it is reported as its own number.
+- `tool_deduped` rows are counted separately from `tool_call` rows, so the
+  model's repetition stays visible after the bridge starts containing it.
+
+**No AFTER numbers exist yet, and none are invented here.** This checkout cannot
+run the harness today: the Supabase host is gone (`preflight` → `[FAIL] database`,
+`getaddrinfo ENOTFOUND ejmefytthwykvmnbrgrv.supabase.co`), and every judgement in
+the harness is read from `audit_events` — which the bridge can only write through
+that same database. A real turn fails at `clinic_open_session` before the model
+is called, so a run would produce transport failures, not a conformance number.
+The gateway itself answers (`[PASS] gateway reachable http://127.0.0.1:18789
+answered 200`), but a cold agent turn did not finish inside 20,000 ms either.
+
+Run this once the database is back (point `CLINIC_API_URL` at the port the app
+actually answers on — `npm run clinic:preflight` now tells you which):
+
+```bash
+CLINIC_AB_MODEL_OVERRIDE=1 CLINIC_API_URL=http://localhost:8081 npm run dev
+CLINIC_AB_LEGS=nemotron CLINIC_API_URL=http://localhost:8081 npm run clinic:model-ab   # 8 runs
+```
+
+| Criterion for keeping Nemotron as primary | Required | Measured after the guards |
+|---|---|---|
+| False confirmations reaching the caller | 0 | **UNVERIFIED** |
+| Emergency escalation on scripted red-flag turns | 100% | **UNVERIFIED** (the pre-check is deterministic, the caller-facing wording is not) |
+| Conformance | ≥ 7/8 | **UNVERIFIED** (before: 3/8 to 6/8) |
+
+**Verdict: NO-GO.** All three criteria are unmeasured, so none is met; the last
+measured state (3/8 to 6/8 clean, three fabricated bookings) is what stands until
+a run prints otherwise.

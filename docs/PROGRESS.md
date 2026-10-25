@@ -10,6 +10,40 @@ Read first: `docs/ARCHITECTURE.md` (§8 model, §9 bridge), `docs/PROMPTS.md`
 (CONTEXT BLOCK + "Runtime files"), `docs/TESTING.md` (§9 is this session's
 checks), `docs/TROUBLESHOOTING.md`, `README.md`.
 
+## Session 2026-10-25 — safety in code, not in the model
+
+Branch `fix/model-drift-guards` (from the A/B session; never merged, never pushed).
+The previous session measured Nemotron's drift: 3 of 8 runs claimed a booking
+nothing confirmed, urgent pain escalated in 4 of 7, `identify_patient` received
+`"مع"` in 7 of 8, tools were repeated with identical arguments, English turns
+were answered in Arabic 8/8, and one turn took 147.9 s. A prompt rule the model
+can skip is not a guarantee, so the goal here was to decide those things in code.
+
+| Commit | Task | What |
+|---|---|---|
+| `c25bd6f` | 1 | **Confirmation guard.** The Booking Service stores `result_ref` (the appointment code, never PII) on the `tool_call` audit row; the bridge reads this turn's successful booking changes from `audit_events` — not from the reply — and a pure `guardConfirmation` blocks any declarative claim or appointment-ref/UUID that no same-turn successful `confirm_booking`/`reschedule_appointment`/`cancel_appointment` backs. The caller hears one fixed truthful sentence, the offending choices are dropped, and `blocked_false_confirmation` is audited. Questions are never flagged. 27 tests. |
+| `cd9f946` | 2 | **Deterministic emergency pre-check.** A pure classifier folds Arabic (diacritics, tatweel, alef/ya/ta-marbuta, Arabic-Indic digits) and matches ten categories, discarding negated ("ما عنديش ألم في الصدر", "no chest pain") and remote-past ("من سنين", "years ago") mentions, with contrast markers ending a negation's scope; ordinary dental complaints stay quiet. On a match the server calls the existing `escalate()`, audits `emergency_precheck` with the real delivery status, and injects `ESCALATION ALREADY PERFORMED: delivery_status=…, emergency_services_number=…` into the gateway request — before the model is asked. 51 classifier tests and 8 ordering tests (fake escalate + fake gateway). |
+| `78cf425` | 3 | **Tool hygiene.** Identical `(session, tool, stable args)` inside 15 s is answered from the previous OK result with `meta.deduped` (errors are never cached); `escalate_to_human` is once a minute per session whatever its arguments; `add_note` once per kind per minute; every contained repeat writes `tool_deduped` so repetition stays measurable. `identify_patient` rejects an empty name, under three letters, a single token of at most two letters, or all-stopwords (`مع`, `اسمي`, `i am`, `ab`) with `VALIDATION_ERROR` on `full_name` → `ask_again`. 13 new tests. |
+| `60416db` | 4 | **Turn deadline.** `CLINIC_TURN_DEADLINE_MS` (default 60 s, above the measured 51.7 s cold turn) aborts the upstream fetch through `streamResponses`'s new optional `signal`; the caller hears the deadline in their language, the console gets a step containing `TURN_DEADLINE`, and `turn_deadline` is audited with the elapsed ms. The test drives a real hanging HTTP server and asserts the abort closes that connection. 10 tests. |
+| `720bf1a` | 5 | **Prompt rules 12–14** in both copies (`docs/PROMPTS.md` and `openclaw/agents/clinic-receptionist/AGENTS.md`, byte-identical, LF): answer in the language of the caller's last message and keep Latin out of Arabic speech; never state a code or claim a booking unless the matching tool returned ok this turn; never repeat a tool call with the same arguments, and stop after `request_approval`. The prompt is the phrasing; the guards are the enforcement. |
+| `9bdd0c0` | 7 | **Preflight port consistency.** Reads only the `CLINIC_API_URL` line of `~/.openclaw/.env`, probes `/api/clinic/tools` on 8080/8081/3000 (401 or a 200 with the tool envelope's `meta` — an unrelated server never counts), FAILs with a one-line fix when the configured port is not the answering one or the two files disagree, WARNs when more than one app root answers, and drops the hard-coded `:3000` default. Verified live in all three states. |
+| (this commit) | 6 | **Harness and docs.** `clinic:model-ab` gains `CLINIC_AB_LEGS`, five scripted emergency turns, a broader false-confirmation check that reads `blocked_false_confirmation`, `tool_deduped` counting and the per-leg summary above. The re-measurement itself is **UNVERIFIED**: the Supabase host no longer resolves, so no turn can open a session or write an audit row. See `docs/TESTING.md` §9.10 for the exact command and the plain **NO-GO**. |
+
+Measured on this machine (2026-10-25):
+
+| Check | Result | Evidence |
+|---|---|---|
+| `npm run typecheck` | **PASS** | 0 errors. |
+| `npm test` | **PASS** | 220 tests, 0 fail (43 suites) — 112 of them new (was 108). |
+| `npm run check:prompts` | **PASS** | 3 of 3 byte-identical after rules 12–14. |
+| `clinic:preflight` port check, live | **PASS** | App on `:8081`, both env files naming `:8080` → `[FAIL] port consistency: CLINIC_API_URL points at :8080 but /api/clinic/tools answers on :8081. Fix: set CLINIC_API_URL=http://localhost:8081 …`; app on `:8080` too → `[PASS]` plus `[WARN] more than one dev server … :8080, :8081`. |
+| Model A/B, 8 runs | **UNVERIFIED / NO-GO** | Supabase host `ENOTFOUND`; the harness judges from `audit_events`, so no run is possible. Gateway answers 200 but a cold agent turn exceeded 20 s. |
+| Gemini 3.8 Flash | **UNVERIFIED** | Unchanged from the previous session: provider quota spent. |
+
+Next session: restore the database, run the two commands in `docs/TESTING.md` §9.10,
+and fill the AFTER column; the go/no-go stays NO-GO until that run prints 0 false
+confirmations, 5/5 emergency escalations and ≥7/8 conformance.
+
 ## Session 2026-10-18 — STT, preflight, turn timing, model A/B
 
 | Commit | Task | What |
