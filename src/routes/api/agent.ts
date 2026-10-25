@@ -322,6 +322,7 @@ export const Route = createFileRoute("/api/agent")({
           "@/lib/clinic/snapshot.server"
         );
         const { busyScreen, callModelWithRateLimitRetry } = await import("@/lib/clinic/upstream.server");
+        const { precheckBeforeGateway } = await import("@/lib/clinic/emergency.server");
 
         // A clinic tool call costs two extra model round trips, so the bridge prefetches
         // the next free slots for every branch and injects them as data-only context. The
@@ -592,10 +593,23 @@ export const Route = createFileRoute("/api/agent")({
 
               const gatewayStarted = Date.now();
               let firstEventMs: number | null = null;
-              const response = await callModelWithRateLimitRetry({
-                call: () => callModel(baseInput),
-                onRateLimited: auditRateLimited,
-              });
+              // A possible emergency is classified from the caller's own words, escalated for
+              // real and then described to the model — BEFORE the model is asked anything. The
+              // model therefore cannot miss the escalation, invent one, or offer a booking.
+              const response = await precheckBeforeGateway(
+                { text: lastUser, sessionId: clinicSessionId },
+                (emergencyNote) =>
+                  callModelWithRateLimitRetry({
+                    call: () =>
+                      callModel(
+                        emergencyNote
+                          ? [...baseInput, { role: "system", content: [{ type: "input_text", text: emergencyNote }] }]
+                          : baseInput,
+                      ),
+                    onRateLimited: auditRateLimited,
+                  }),
+                { audit: auditBridgeEvent },
+              );
               if (response === null) {
                 send({ type: "response.output_text.done", text: JSON.stringify(busyScreen(locale)) });
                 return;
