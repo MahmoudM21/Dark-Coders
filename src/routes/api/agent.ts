@@ -3,6 +3,7 @@ import { z } from "zod";
 import { COMMAND_NAMES } from "@/lib/voice/screen";
 import { JSON_INSTRUCTION, OUTPUT_FORMAT, SYSTEM_PROMPT, planContextMessage } from "@/lib/voice/prompt";
 import { sanitizeScreenPayload } from "@/lib/voice/sanitize";
+import { BOOKING_TOOLS, guardConfirmation, type ConfirmationSuccess } from "@/lib/clinic/confirmation-guard";
 
 type Turn = { role: "user" | "assistant"; text: string };
 
@@ -198,6 +199,52 @@ async function countClinicToolCalls(sessionId: string, sinceIso: string): Promis
     return data?.length ?? 0;
   } catch {
     return null;
+  }
+}
+
+/**
+ * This turn's successful booking changes, as `(tool, appointment_ref)` from audit rows.
+ * Read from the database rather than taken from the reply: a model's claim about what it
+ * did is exactly the thing the confirmation guard must not trust.
+ */
+async function successfulBookingRefs(sessionId: string, sinceIso: string): Promise<ConfirmationSuccess[]> {
+  try {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const client = supabaseAdmin as unknown as {
+      from: (table: string) => {
+        select: (fields: string) => {
+          eq: (col: string, value: unknown) => {
+            eq: (col2: string, value2: unknown) => {
+              eq: (col3: string, value3: unknown) => {
+                gte: (col4: string, value4: unknown) => Promise<{
+                  data: Array<Record<string, unknown>> | null;
+                  error: { message?: string | null } | null;
+                }>;
+              };
+            };
+          };
+        };
+      };
+    };
+    const { data, error } = await client
+      .from("audit_events")
+      .select("tool,input")
+      .eq("session_id", sessionId)
+      .eq("event", "tool_call")
+      .eq("outcome", "ok")
+      .gte("at", sinceIso);
+    if (error) return [];
+    const successes: ConfirmationSuccess[] = [];
+    for (const row of data ?? []) {
+      const tool = typeof row["tool"] === "string" ? row["tool"] : "";
+      if (!(BOOKING_TOOLS as readonly string[]).includes(tool)) continue;
+      const input = row["input"];
+      const ref = input && typeof input === "object" ? (input as Record<string, unknown>)["result_ref"] : null;
+      successes.push(typeof ref === "string" ? { tool, result_ref: ref } : { tool });
+    }
+    return successes;
+  } catch {
+    return [];
   }
 }
 
@@ -670,6 +717,32 @@ export const Route = createFileRoute("/api/agent")({
                 }
               }
 
+              // Last line of defence before the caller hears anything: a confirmation claim
+              // (or a confirmation code) must be backed by a SUCCESSFUL booking tool call from
+              // this turn. It runs after the proposal block, so a non-null action_proposal here
+              // is the server's own row and a model-invented one has already been dropped.
+              const bookingSuccesses = await successfulBookingRefs(clinicSessionId, new Date(turnStarted).toISOString());
+              const guarded = guardConfirmation({
+                text: safe.screen.text,
+                choices: safe.screen.choices,
+                lang: /[\u0600-\u06FF]/.test(lastUser) ? "ar" : "en",
+                successes: bookingSuccesses,
+              });
+              if (guarded.blocked) {
+                // The pattern name only: the raw sentence is caller-facing text and is not audited.
+                await auditBridgeEvent({
+                  session_id: clinicSessionId,
+                  actor: "bridge",
+                  event: "blocked_false_confirmation",
+                  outcome: "denied",
+                  error_code: "FALSE_CONFIRMATION",
+                  input: { pattern: guarded.pattern, codes: guarded.codes.length },
+                });
+              }
+              const spoken = guarded.blocked
+                ? { ...safe, screen: { ...safe.screen, text: guarded.text, choices: guarded.choices } }
+                : safe;
+
               // One turn, measured stage by stage. The tool count comes from audit rows for
               // this session (what actually ran), never from the model's own claim.
               const toolCalls = await countClinicToolCalls(clinicSessionId, new Date(turnStarted).toISOString());
@@ -687,7 +760,7 @@ export const Route = createFileRoute("/api/agent")({
                 total_ms: Date.now() - turnStarted,
               };
               send({ type: "bridge.timing", timing });
-              send({ type: "response.output_text.done", text: JSON.stringify(safe) });
+              send({ type: "response.output_text.done", text: JSON.stringify(spoken) });
               await auditBridgeEvent({
                 session_id: clinicSessionId,
                 actor: "bridge",

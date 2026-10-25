@@ -73,6 +73,22 @@ function redactInput(input: Record<string, unknown>) {
   return redacted;
 }
 
+/** Tools whose success carries the appointment_ref the caller may be told aloud. */
+const BOOKING_TOOLS_WITH_REF = ["confirm_booking", "reschedule_appointment", "cancel_appointment"] as const;
+
+/**
+ * The appointment_ref of a SUCCESSFUL booking change, or null. It is a 6-character code, not
+ * PII, and it is stored on the audit row so the bridge's confirmation guard can prove that a
+ * code the caller was told really came from this turn's tool result.
+ */
+function resultRef(tool: string, envelope: Envelope): string | null {
+  if (!(BOOKING_TOOLS_WITH_REF as readonly string[]).includes(tool) || !envelope.ok) return null;
+  const data = envelope.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const ref = (data as Record<string, unknown>)["appointment_ref"];
+  return typeof ref === "string" && ref.trim() ? ref.trim().toUpperCase() : null;
+}
+
 function errorFromEnvelope(value: unknown): Envelope {
   if (!value || typeof value !== "object") return fail("INTERNAL", "Malformed RPC error envelope");
   const envelope = value as { code?: unknown; message?: unknown; details?: unknown };
@@ -295,6 +311,7 @@ export async function runTool(tool: ToolName | string, args: unknown, ctx: ToolC
 
   const latency = Date.now() - started;
   const envelope = withMeta(result, ctx.request_id, latency);
+  const ref = resultRef(name, envelope);
 
   try {
     await auditInsert({
@@ -302,7 +319,10 @@ export async function runTool(tool: ToolName | string, args: unknown, ctx: ToolC
       actor: "agent",
       event: "tool_call",
       tool: name,
-      input: redactInput(input as Record<string, unknown>),
+      input: {
+        ...redactInput(input as Record<string, unknown>),
+        ...(ref ? { result_ref: ref } : {}),
+      },
       outcome: envelope.ok ? "ok" : "error",
       error_code: envelope.ok ? null : envelope.error.code,
       latency_ms: latency,

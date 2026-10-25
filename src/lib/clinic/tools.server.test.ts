@@ -63,6 +63,67 @@ describe("runTool", () => {
     assert.equal(called, false);
   });
 
+  it("stores the appointment_ref of a successful booking change on the audit row", async () => {
+    const audit: Array<Record<string, unknown>> = [];
+    const result = await runTool(
+      "confirm_booking",
+      { approval_id: "apr_123456789012" },
+      { session_id: "44444444-4444-4444-8444-444444444444", request_id: "r5" },
+      {
+        callRpcFn: async () => ({
+          ok: true,
+          data: { appointment_ref: "a1b2c3", status: "booked" },
+        }),
+        auditInsert: async (entry) => {
+          audit.push(entry);
+        },
+      },
+    );
+    assert.equal(result.ok, true);
+    assert.equal(audit.length, 1);
+    const input = audit[0]?.["input"] as Record<string, unknown> | undefined;
+    assert.equal(input?.["result_ref"], "A1B2C3");
+    assert.equal(audit[0]?.["outcome"], "ok");
+  });
+
+  it("never stores a result_ref for a failed booking change", async () => {
+    const audit: Array<Record<string, unknown>> = [];
+    await runTool(
+      "confirm_booking",
+      { approval_id: "apr_123456789013" },
+      { session_id: "44444444-4444-4444-8444-444444444444", request_id: "r6" },
+      {
+        callRpcFn: async () => ({
+          ok: false,
+          error: { code: "APPROVAL_PENDING", message: "Waiting for approval" },
+        }),
+        auditInsert: async (entry) => {
+          audit.push(entry);
+        },
+      },
+    );
+    const input = audit[0]?.["input"] as Record<string, unknown> | undefined;
+    assert.equal(input?.["result_ref"], undefined);
+    assert.equal(audit[0]?.["outcome"], "error");
+  });
+
+  it("does not attach a result_ref to a tool that does not change a booking", async () => {
+    const audit: Array<Record<string, unknown>> = [];
+    await runTool(
+      "find_doctor",
+      { query: "يوسف" },
+      { session_id: "44444444-4444-4444-8444-444444444444", request_id: "r7" },
+      {
+        callRpcFn: async () => ({ ok: true, data: { appointment_ref: "A1B2C3" } }),
+        auditInsert: async (entry) => {
+          audit.push(entry);
+        },
+      },
+    );
+    const input = audit[0]?.["input"] as Record<string, unknown> | undefined;
+    assert.equal(input?.["result_ref"], undefined);
+  });
+
   it("applies rate limiting", async () => {
     const calls: number[] = [];
     let now = 1;
