@@ -1,5 +1,5 @@
 import { JSON_INSTRUCTION, SYSTEM_PROMPT, planContextMessage } from "@/lib/voice/prompt";
-import { readError, readSse, streamAgentAnswer, type Turn, type TurnTiming } from "@/lib/voice/agent";
+import { readError, readSse, streamAgentAnswer, type FailedStep, type Turn, type TurnTiming } from "@/lib/voice/agent";
 import { KIND_INFO, type Provider } from "@/lib/settings/providers";
 
 type Handlers = {
@@ -7,6 +7,8 @@ type Handlers = {
   onAnswer: (text: string) => void;
   /** Clinic bridge stage timings; only the built-in gateway path sends them. */
   onTiming?: (timing: TurnTiming) => void;
+  /** Clinic bridge failed/guarded steps (deadline, blocked confirmation); same path only. */
+  onFailedStep?: (step: FailedStep) => void;
 };
 
 /** Removes ```json fences some local models add. */

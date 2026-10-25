@@ -208,6 +208,10 @@ function VoiceConsole() {
                 `session ${showMs(timing["session_open_ms"])} · context ${showMs(timing["context_ms"])} · first event ${showMs(timing["gateway_first_event_ms"])} · gateway ${showMs(timing["gateway_ms"])} · total ${showMs(timing["total_ms"])} · ${tools}${timing["repair_used"] ? " · repaired" : ""}`,
               );
             },
+            onFailedStep: (step) => {
+              // The bridge reports these itself; the code is the searchable part.
+              addStep(step.tone === "warn" ? "Guard" : "Failed", step.detail.includes(step.code) ? step.detail : `${step.code} · ${step.detail}`, step.tone ?? "error");
+            },
           }, signal);
           break;
         } catch (error) {

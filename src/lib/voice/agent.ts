@@ -85,9 +85,21 @@ export async function transcribeRecording(
 /** Streams the agent answer, reporting reasoning summary text and answer deltas separately. */
 export type TurnTiming = Record<string, number | boolean | null>;
 
+/**
+ * A server-side step the console should log as failed or guarded, with its code. The clinic
+ * bridge sends these (`bridge.failed_step`) for a turn that ran out of time and for a
+ * confirmation claim it blocked; no other route emits the event, so nothing else changes.
+ */
+export type FailedStep = { code: string; detail: string; tone?: "warn" | "error" };
+
 export async function streamAgentAnswer(
   turns: Turn[],
-  handlers: { onThinking: (text: string) => void; onAnswer: (text: string) => void; onTiming?: (timing: TurnTiming) => void },
+  handlers: {
+    onThinking: (text: string) => void;
+    onAnswer: (text: string) => void;
+    onTiming?: (timing: TurnTiming) => void;
+    onFailedStep?: (step: FailedStep) => void;
+  },
   signal?: AbortSignal,
   context?: string,
   model?: string,
@@ -117,9 +129,25 @@ export async function streamAgentAnswer(
   let answer = "";
   let thinking = "";
   await readSse(response, (data) => {
-    const payload = JSON.parse(data) as { type?: string; delta?: string; text?: string; error?: unknown; timing?: TurnTiming };
+    const payload = JSON.parse(data) as {
+      type?: string;
+      delta?: string;
+      text?: string;
+      error?: unknown;
+      timing?: TurnTiming;
+      code?: string;
+      detail?: string;
+      tone?: "warn" | "error";
+    };
     if (payload.error || payload.type === "error") throw new Error("The agent stream failed");
     if (payload.type === "bridge.timing" && payload.timing) handlers.onTiming?.(payload.timing);
+    if (payload.type === "bridge.failed_step" && payload.code) {
+      handlers.onFailedStep?.({
+        code: payload.code,
+        detail: payload.detail ?? payload.code,
+        ...(payload.tone ? { tone: payload.tone } : {}),
+      });
+    }
     if (payload.type === "response.reasoning_summary_text.delta" && payload.delta) {
       thinking += payload.delta;
       handlers.onThinking(thinking);

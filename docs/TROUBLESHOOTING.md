@@ -175,3 +175,52 @@ npm run clinic:model-ab
 
 It changes the backend model for that request only; the agent's own configuration
 and the default model are untouched.
+
+## A turn ends with "Failed step: TURN_DEADLINE"
+
+**What it means:** the model had not answered within `CLINIC_TURN_DEADLINE_MS`
+(default 60,000 ms), so the bridge aborted the gateway request itself — the
+connection closes, the provider stops working on it — and told the caller
+`الرد أخد وقت أطول من المسموح (60 ثانية). جرّب تاني.` / `That took longer than
+allowed (60 s). Please try again.` Nothing was booked, cancelled or rescheduled
+by that turn.
+
+**Diagnose:**
+
+```sql
+select at, input from audit_events where event = 'turn_deadline' order by at desc limit 5;
+```
+
+`input.elapsed_ms` is the deadline clock (it should be ≈ `deadline_ms`), and
+`input.turn_ms` includes session open and the context prefetch. A run of these
+rows means the provider is slow, not that the bridge is: compare with
+`gateway_first_event_ms` in the `turn_timing` rows, and raise the deadline only if
+healthy turns are genuinely slower:
+
+```bash
+CLINIC_TURN_DEADLINE_MS=90000 npm run dev
+```
+
+The default is 60 s because a cold first turn on this machine measured 51.7 s; a
+smaller value aborts turns that would have answered.
+
+## The caller is told "لسه ما اتأكدش حاجة" and the console shows a **Guard** step
+
+**What it means:** that is the confirmation guard doing its job. The reply claimed
+a booking, a cancellation or a reschedule — or stated a confirmation code — and
+the `audit_events` rows for the same turn and session contain no successful
+`confirm_booking` / `reschedule_appointment` / `cancel_appointment` with a
+matching `input.result_ref`, so the claim was replaced by the fixed truthful
+sentence before the caller heard it.
+
+```sql
+select at, outcome, input from audit_events where event = 'blocked_false_confirmation' order by at desc limit 10;
+```
+
+`input.pattern` names the rule that fired (`ar_booked`, `en_confirmed`,
+`appointment_ref`, `uuid`, …) and `input.codes` counts the unverified codes; the
+raw sentence is deliberately not stored. A cluster of these means the model is
+drifting towards claiming work it did not do — `npm run clinic:model-ab` scores
+it, and the same turn would have been a fabricated booking before the guard
+existed. Do not silence it: fix the turn (usually a missing approval or a failed
+tool call).

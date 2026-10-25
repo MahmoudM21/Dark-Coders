@@ -760,6 +760,14 @@ export const Route = createFileRoute("/api/agent")({
                   error_code: "FALSE_CONFIRMATION",
                   input: { pattern: guarded.pattern, codes: guarded.codes.length },
                 });
+                // Show it as a guarded step, so the caller's truthful answer is explained
+                // instead of looking like the model simply refused.
+                send({
+                  type: "bridge.failed_step",
+                  code: "FALSE_CONFIRMATION",
+                  detail: `blocked a ${guarded.pattern} claim with no successful booking call in this turn`,
+                  tone: "warn",
+                });
               }
               const spoken = guarded.blocked
                 ? { ...safe, screen: { ...safe.screen, text: guarded.text, choices: guarded.choices } }
@@ -796,7 +804,12 @@ export const Route = createFileRoute("/api/agent")({
                 // The upstream was still working when the turn ran out of time. The abort has
                 // already closed that connection; the caller is told why, in their language,
                 // and the console gets a step with the searchable code.
-                send({ type: "response.reasoning_summary_text.delta", delta: deadlineStep(deadlineMs) });
+                send({
+                  type: "bridge.failed_step",
+                  code: "TURN_DEADLINE",
+                  detail: deadlineStep(deadlineMs),
+                  tone: "error",
+                });
                 send({
                   type: "response.output_text.done",
                   text: JSON.stringify({
