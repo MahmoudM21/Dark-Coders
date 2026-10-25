@@ -9,6 +9,8 @@
 // check, and it is created by the same RPC the bridge uses.
 
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 
 const results = [];
@@ -53,6 +55,141 @@ function postgresDsn() {
   return null;
 }
 
+/**
+ * The one line this script is allowed to read from ~/.openclaw/.env: CLINIC_API_URL, which is
+ * a URL and not a secret. Every other line in that file is ignored, never printed and never
+ * copied into process.env.
+ */
+function openclawClinicApiUrl() {
+  const path = join(homedir(), ".openclaw", ".env");
+  if (!existsSync(path)) return { source: path, value: null };
+  for (const rawLine of readFileSync(path, "utf8").split(/\r?\n/)) {
+    const match = /^\s*(?:export\s+)?CLINIC_API_URL\s*=\s*(.*)$/.exec(rawLine);
+    if (!match) continue;
+    let value = (match[1] ?? "").trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    return { source: path, value: value || null };
+  }
+  return { source: path, value: null };
+}
+
+/** The development ports this checkout has actually run on. */
+const APP_PORT_CANDIDATES = [8080, 8081, 3000];
+
+/** The tools base URL resolved by the port check, so no check has to guess a port. */
+let toolsBase = null;
+
+function portOf(value) {
+  try {
+    const url = new URL(value);
+    if (url.port) return Number(url.port);
+    return url.protocol === "https:" ? 443 : 80;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether the clinic tools route answers on this port, and how. A 401 is the route refusing a
+ * wrong token; a 200 must carry the tool envelope's meta. Anything else (a 404 from some other
+ * server, a proxy error page) is NOT the route, so it is never counted as a dev server.
+ */
+async function probeToolsRoute(port) {
+  try {
+    const response = await withTimeout(
+      (signal) =>
+        fetch(`http://localhost:${port}/api/clinic/tools`, {
+          method: "POST",
+          signal,
+          headers: { "Content-Type": "application/json", Authorization: "Bearer deliberately-wrong-token" },
+          body: JSON.stringify({ tool: "get_clinic_info", args: { session_id: "00000000-0000-4000-8000-000000000000" } }),
+        }),
+      2500,
+    );
+    if (response.status === 401) return { port, status: 401, route: true };
+    const body = await response.json().catch(() => null);
+    const route = Boolean(body && typeof body === "object" && body.meta && typeof body.meta.request_id === "string");
+    return { port, status: response.status, route };
+  } catch {
+    return null;
+  }
+}
+
+/** The status the app root answers with, or null when nothing is listening there. */
+async function probeAppRoot(port) {
+  try {
+    const response = await withTimeout((signal) => fetch(`http://localhost:${port}/`, { signal }), 2500);
+    return response.status;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One app, one port. The MCP proxy and the console must reach the SAME dev server, so the
+ * configured CLINIC_API_URL is compared with the port where /api/clinic/tools actually
+ * answers, rather than assumed.
+ */
+async function checkPortConsistency() {
+  const configured = env("CLINIC_API_URL");
+  const fromFile = openclawClinicApiUrl();
+
+  const answering = [];
+  for (const port of APP_PORT_CANDIDATES) {
+    const probe = await probeToolsRoute(port);
+    if (probe?.route) answering.push(probe);
+  }
+  const roots = [];
+  for (const port of APP_PORT_CANDIDATES) {
+    if ((await probeAppRoot(port)) !== null) roots.push(port);
+  }
+
+  if (answering.length === 0) {
+    record(
+      "UNVERIFIED",
+      "port consistency",
+      `no app answered /api/clinic/tools on ${APP_PORT_CANDIDATES.map((port) => `:${port}`).join(", ")} — start one with npm run dev, or set CLINIC_API_URL`,
+    );
+    return;
+  }
+
+  const answeringPorts = answering.map((entry) => entry.port);
+  const preferred = portOf(configured ?? "") ?? portOf(fromFile.value ?? "");
+  toolsBase = preferred && answeringPorts.includes(preferred) ? `http://localhost:${preferred}` : `http://localhost:${answeringPorts[0]}`;
+
+  if (configured && fromFile.value && portOf(configured) !== portOf(fromFile.value)) {
+    record(
+      "FAIL",
+      "port consistency",
+      `CLINIC_API_URL is ${configured} in .env but ${fromFile.value} in ${fromFile.source}. Fix: make both ${toolsBase} (that is where /api/clinic/tools answered).`,
+    );
+  } else if (preferred === null) {
+    record(
+      "WARN",
+      "port consistency",
+      `CLINIC_API_URL is not set in .env or ${fromFile.source}; using ${toolsBase}, where /api/clinic/tools answered. Fix: add CLINIC_API_URL=${toolsBase} to both files.`,
+    );
+  } else if (!answeringPorts.includes(preferred)) {
+    record(
+      "FAIL",
+      "port consistency",
+      `CLINIC_API_URL points at :${preferred} but /api/clinic/tools answers on ${answeringPorts.map((port) => `:${port}`).join(", ")}. Fix: set CLINIC_API_URL=${toolsBase} in .env and ${fromFile.source} (or start the app on :${preferred}).`,
+    );
+  } else {
+    record("PASS", "port consistency", `CLINIC_API_URL :${preferred} is the port where /api/clinic/tools answered`);
+  }
+
+  if (roots.length > 1) {
+    record(
+      "WARN",
+      "more than one dev server",
+      `the app root answers on ${roots.map((port) => `:${port}`).join(", ")} — stop the stale one, or the console and the MCP proxy will talk to different servers`,
+    );
+  }
+}
+
 async function withTimeout(promise, ms) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
@@ -66,7 +203,7 @@ async function withTimeout(promise, ms) {
 function checkEnvironment(logPath) {
   const required = ["OPENCLAW_GATEWAY_URL", "CLINIC_TOOLS_TOKEN", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"];
   const optional = [
-    ["CLINIC_API_URL", "not set — defaulting to http://localhost:3000 for the tools check"],
+    ["CLINIC_API_URL", "not set — the port check will use whichever dev port answers /api/clinic/tools"],
     ["OPENCLAW_API_KEY", "not set — the gateway will reject the request if it requires auth"],
     ["ESCALATION_WEBHOOK_URL", "not set — escalate_to_human will truthfully report delivery_failed"],
   ];
@@ -286,10 +423,18 @@ async function checkAgent() {
 }
 
 async function checkTools() {
-  const base = env("CLINIC_API_URL") || "http://localhost:3000";
+  const base = env("CLINIC_API_URL") || toolsBase;
   const token = env("CLINIC_TOOLS_TOKEN");
   if (!token) {
     record("UNVERIFIED", "booking service", "set CLINIC_TOOLS_TOKEN, then rerun");
+    return;
+  }
+  if (!base) {
+    record(
+      "UNVERIFIED",
+      "booking service",
+      "no app answered on the known dev ports and CLINIC_API_URL is not set — run npm run dev, then rerun",
+    );
     return;
   }
   const endpoint = `${base.replace(/\/$/, "")}/api/clinic/tools`;
@@ -378,6 +523,7 @@ async function main() {
   await checkDatabase(tenantSlug);
   await checkGateway();
   await checkAgent();
+  await checkPortConsistency();
   await checkTools();
   await checkSpeech();
 
