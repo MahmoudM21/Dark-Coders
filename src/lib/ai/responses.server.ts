@@ -15,6 +15,11 @@ type StreamOptions = {
    * a real rate limit from an ordinary failure.
    */
   forwardRetryAfter?: boolean;
+  /**
+   * Abort the upstream request from the caller's side. Unset for every existing caller, so
+   * the request signal is used exactly as before; the clinic bridge passes its turn deadline.
+   */
+  signal?: AbortSignal;
 };
 
 export async function streamResponses(
@@ -30,7 +35,7 @@ export async function streamResponses(
   try {
     const response = await gateway.fetch(`${GATEWAY_BASE_URL}/v1/responses`, {
       method: "POST",
-      signal: request.signal,
+      signal: options.signal ?? request.signal,
       headers: getGatewayHeaders({
         "Content-Type": "application/json",
         "X-Lovable-AIG-SDK": "fetch",
@@ -51,7 +56,7 @@ export async function streamResponses(
     headers.set("Cache-Control", "no-cache");
     return new Response(response.body, { status: response.status, headers });
   } catch (error) {
-    if (request.signal.aborted && error instanceof Error && error.name === "AbortError") {
+    if ((options.signal?.aborted || request.signal.aborted) && error instanceof Error && error.name === "AbortError") {
       return new Response(null, { status: 499 });
     }
     return new Response(
@@ -77,7 +82,7 @@ async function streamChatAsResponses(request: Request, input: Record<string, unk
   try {
     const response = await gateway.fetch(`${GATEWAY_BASE_URL}/v1/chat/completions`, {
       method: "POST",
-      signal: request.signal,
+      signal: options.signal ?? request.signal,
       headers: getGatewayHeaders({
         "Content-Type": "application/json",
         "X-Lovable-AIG-SDK": "fetch",
@@ -131,7 +136,7 @@ async function streamChatAsResponses(request: Request, input: Record<string, unk
     }));
     return new Response(out, { status: 200, headers });
   } catch (error) {
-    if (request.signal.aborted) return new Response(null, { status: 499 });
+    if (options.signal?.aborted || request.signal.aborted) return new Response(null, { status: 499 });
     return new Response(
       JSON.stringify({
         error: `Could not reach OpenClaw Gateway at ${GATEWAY_BASE_URL}. Start your OpenClaw gateway or configure OPENCLAW_GATEWAY_URL in .env.`,

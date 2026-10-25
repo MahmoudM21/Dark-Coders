@@ -323,6 +323,9 @@ export const Route = createFileRoute("/api/agent")({
         );
         const { busyScreen, callModelWithRateLimitRetry } = await import("@/lib/clinic/upstream.server");
         const { precheckBeforeGateway } = await import("@/lib/clinic/emergency.server");
+        const { deadlineScreen, deadlineStep, startTurnDeadline, turnDeadlineMs } = await import(
+          "@/lib/clinic/turn-deadline"
+        );
 
         // A clinic tool call costs two extra model round trips, so the bridge prefetches
         // the next free slots for every branch and injects them as data-only context. The
@@ -565,6 +568,10 @@ export const Route = createFileRoute("/api/agent")({
           start: async (controller) => {
             const enc = new TextEncoder();
             const send = (event: unknown) => controller.enqueue(enc.encode(sse(event)));
+            // A turn that never ends is a failed turn. This signal is handed to the upstream
+            // fetch, so reaching the deadline closes the gateway connection instead of waiting.
+            const deadlineMs = turnDeadlineMs();
+            const deadline = startTurnDeadline(deadlineMs);
 
             try {
               const callModel = (input: Record<string, unknown>[]) =>
@@ -575,6 +582,7 @@ export const Route = createFileRoute("/api/agent")({
                   // the wait it asked for. No other caller sets this, so nothing else
                   // behaves differently.
                   forwardRetryAfter: true,
+                  signal: deadline.signal,
                 });
 
               // A 429 gets ONE automatic retry, and only when the upstream asked for a wait
@@ -784,6 +792,34 @@ export const Route = createFileRoute("/api/agent")({
               });
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
+              if (deadline.signal.aborted) {
+                // The upstream was still working when the turn ran out of time. The abort has
+                // already closed that connection; the caller is told why, in their language,
+                // and the console gets a step with the searchable code.
+                send({ type: "response.reasoning_summary_text.delta", delta: deadlineStep(deadlineMs) });
+                send({
+                  type: "response.output_text.done",
+                  text: JSON.stringify({
+                    kind: "screen",
+                    screen: {
+                      text: deadlineScreen(/[\u0600-\u06FF]/.test(lastUser) ? "ar" : "en", Math.round(deadlineMs / 1000)),
+                      choices: [],
+                      navigation: ["home"],
+                    },
+                    action_proposal: null,
+                    app_commands: [],
+                  }),
+                });
+                await auditBridgeEvent({
+                  session_id: clinicSessionId,
+                  actor: "bridge",
+                  event: "turn_deadline",
+                  outcome: "error",
+                  error_code: "TURN_DEADLINE",
+                  input: { elapsed_ms: deadline.elapsedMs(), deadline_ms: deadlineMs, turn_ms: Date.now() - turnStarted },
+                });
+                return;
+              }
               // A provider failure can arrive inside a 200 SSE stream (OpenClaw does this
               // for an exhausted quota). If it is a rate limit, the caller hears the
               // busy screen — the same one the non-streaming 429 path produces.
@@ -819,6 +855,7 @@ export const Route = createFileRoute("/api/agent")({
                 input: { message },
               });
             } finally {
+              deadline.clear();
               controller.close();
             }
           },
